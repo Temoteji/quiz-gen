@@ -37,8 +37,11 @@ const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
 
 app.use(express.json({ limit: '100kb' }));
 
-// FIXED: Adjusted path to look up one level from 'api/' to find the 'public' folder
-app.use(express.static(path.join(__dirname, '../public')));
+// Robust static path resolution: checks both local and Vercel serverless layouts
+const publicPath = path.join(__dirname, 'public');
+const vercelPublicPath = path.join(__dirname, '../public');
+app.use(express.static(publicPath));
+app.use(express.static(vercelPublicPath));
 
 const quizLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
