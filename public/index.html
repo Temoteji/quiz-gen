@@ -112,7 +112,7 @@
     .page-view.active-page { display: block; }
 
     @media(max-width:820px){
-      .app{display:block}
+      .app{display:block !important}
       .burger-btn{display:flex !important}
       aside#sidebarNav{display:none !important;position:absolute;top:80px;left:0;width:100%;z-index:99;box-shadow:0 10px 20px rgba(0,0,0,0.08);border-right:0;border-bottom:1px solid var(--line)}
       aside#sidebarNav.mobile-open{display:flex !important}
@@ -147,7 +147,7 @@
 </head>
 <body>
   <div class="app">
-    <aside id="sidebarNav">
+    <aside id="sidebarNav" style="display: flex;">
       <div class="brand"><span class="mark">Q</span><span>QuizForge</span></div>
       <nav aria-label="Main navigation">
         <button class="nav-item active" data-target="pageOverview"><span class="nav-icon">home</span>Overview</button>
@@ -157,7 +157,7 @@
       <div class="sidebar-note"><strong>Small steps, daily.</strong>Your best study sessions start with one good question.</div>
     </aside>
     
-    <main style="max-width: 100%; width: 100%; display: flex; flex-direction: column;">
+    <main style="max-width: 1120px; width: 100%; display: flex; flex-direction: column;">
       <div class="topbar">
         <div style="display: flex; align-items: center; gap: 14px;">
           <button class="burger-btn" id="burgerToggle">☰ Menu</button>
@@ -349,7 +349,6 @@
       sidebarNav.classList.toggle('mobile-open');
     };
 
-    // Close menu when clicking outside on mobile
     document.addEventListener('click', (e) => {
       if (!sidebarNav.contains(e.target) && e.target !== burgerToggle) {
         sidebarNav.classList.remove('mobile-open');
