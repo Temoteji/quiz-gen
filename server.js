@@ -4,10 +4,11 @@ const rateLimit = require('express-rate-limit');
 const multer = require('multer');
 const path = require('path');
 const OpenAI = require('openai');
-const session = require('express-session');
 const passport = require('passport');
 const GoogleStrategy = require('passport-google-oauth20').Strategy;
 const { createClient } = require('@libsql/client');
+const cookieParser = require('cookie-parser');
+const jwt = require('jsonwebtoken');
 const pdfParse = require('pdf-parse');
 
 const parsePdf = async (buffer) => {
@@ -90,20 +91,28 @@ const openai = new OpenAI({
 
 app.use(express.json({ limit: '100kb' }));
 
-app.use(session({
-  secret: process.env.SESSION_SECRET || 'fallback_secret_key',
-  resave: false,
-  saveUninitialized: false,
-  proxy: true,
-  cookie: { 
-    maxAge: 24 * 60 * 60 * 1000,
-    secure: 'auto',
-    sameSite: 'lax'
-  }
-}));
+// Reused as the JWT signing secret below. Make sure this is set in your
+// Vercel project's environment variables, not just your local .env.
+const JWT_SECRET = process.env.SESSION_SECRET || 'fallback_secret_key';
 
+app.use(cookieParser());
 app.use(passport.initialize());
-app.use(passport.session());
+
+// Stateless auth: instead of express-session (which defaults to an
+// in-memory store that gets wiped every time Vercel spins up a fresh
+// serverless instance), we verify a signed JWT from the cookie on every
+// request. No server-side session storage needed at all.
+app.use((req, res, next) => {
+  const token = req.cookies.token;
+  if (token) {
+    try {
+      req.user = jwt.verify(token, JWT_SECRET);
+    } catch (e) {
+      req.user = null;
+    }
+  }
+  next();
+});
 
 passport.use(new GoogleStrategy({
     clientID: process.env.GOOGLE_CLIENT_ID,
@@ -111,7 +120,8 @@ passport.use(new GoogleStrategy({
     callbackURL: process.env.NODE_ENV === 'production' 
       ? "https://quiz-gen-topaz.vercel.app/auth/google/callback" 
       : "http://localhost:3000/auth/google/callback",
-    proxy: true
+    proxy: true,
+    state: false // no server-side session available to store CSRF state in
   },
   async function(accessToken, refreshToken, profile, cb) {
     try {
@@ -133,9 +143,6 @@ passport.use(new GoogleStrategy({
   }
 ));
 
-passport.serializeUser((user, cb) => cb(null, user));
-passport.deserializeUser((obj, cb) => cb(null, obj));
-
 const publicPath = path.join(__dirname, 'public');
 const vercelPublicPath = path.join(__dirname, '../public');
 app.use(express.static(publicPath));
@@ -149,24 +156,40 @@ const quizLimiter = rateLimit({
   message: { error: 'Too many requests from this device. Try again in a bit.' }
 });
 
-app.get('/auth/google', passport.authenticate('google', { scope: ['profile', 'email'] }));
+app.get('/auth/google', passport.authenticate('google', { scope: ['profile', 'email'], session: false }));
 
 app.get('/auth/google/callback', 
-  passport.authenticate('google', { failureRedirect: '/' }),
-  (req, res) => res.redirect('/')
+  passport.authenticate('google', { session: false, failureRedirect: '/' }),
+  (req, res) => {
+    const token = jwt.sign(
+      {
+        id: req.user.id,
+        displayName: req.user.displayName,
+        name: req.user.name,
+        emails: req.user.emails
+      },
+      JWT_SECRET,
+      { expiresIn: '24h' }
+    );
+    res.cookie('token', token, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      maxAge: 24 * 60 * 60 * 1000
+    });
+    res.redirect('/');
+  }
 );
 
 app.get('/api/user', (req, res) => res.json(req.user || null));
 
-app.get('/logout', (req, res, next) => {
-  req.logout((err) => {
-    if (err) return next(err);
-    res.redirect('/');
-  });
+app.get('/logout', (req, res) => {
+  res.clearCookie('token');
+  res.redirect('/');
 });
 
 function ensureAuthenticated(req, res, next) {
-  if (req.isAuthenticated()) return next();
+  if (req.user) return next();
   res.status(401).json({ error: 'You must be logged in to save or generate quizzes.' });
 }
 
