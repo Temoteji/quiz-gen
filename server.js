@@ -29,17 +29,12 @@ const upload = multer({
   }
 });
 
-if (!GEMINI_API_KEY) {
-  console.warn('WARNING: GEMINI_API_KEY is not set. The quiz endpoint will fail until it is set.');
-}
-
 const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
 
 app.use(express.json({ limit: '100kb' }));
 
-// Clean static path configuration for Vercel and local root layout
-const publicPath = path.join(__dirname, 'public');
-app.use(express.static(publicPath));
+// Vercel serverless static path resolution
+app.use(express.static(path.join(__dirname, 'public')));
 
 const quizLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -78,21 +73,15 @@ async function callGeminiForQuiz(contentParts) {
     const responseText = result.response.text();
 
     let raw = responseText.replace(/```json|```/g, '').trim();
+    let quiz = JSON.parse(raw);
 
-    let quiz;
-    try {
-      quiz = JSON.parse(raw);
-    } catch (parseErr) {
-      console.error('Failed to parse model output as JSON:', raw);
-      throw new Error('The AI returned an unexpected format. Try again.');
-    }
     if (!Array.isArray(quiz) || quiz.length === 0) {
       throw new Error('The AI did not return any questions. Try again.');
     }
     return quiz;
   } catch (error) {
     console.error('Gemini API error:', error);
-    throw new Error('The AI service failed to respond. Try again shortly.');
+    throw new Error(error.message || 'The AI service failed to respond. Try again shortly.');
   }
 }
 
@@ -102,11 +91,8 @@ app.post('/api/generate-quiz', quizLimiter, async (req, res) => {
     if (notes.length < 30) {
       return res.status(400).json({ error: 'Notes are too short to build a quiz from.' });
     }
-    if (notes.length > 12000) {
-      return res.status(400).json({ error: 'Notes are too long. Try a shorter excerpt.' });
-    }
     if (!GEMINI_API_KEY) {
-      return res.status(500).json({ error: 'Server is missing its API key. The site owner needs to configure GEMINI_API_KEY.' });
+      return res.status(500).json({ error: 'Server is missing its API key.' });
     }
 
     const quiz = await callGeminiForQuiz([`Here are the notes:\n\n${notes}`]);
@@ -120,10 +106,7 @@ app.post('/api/generate-quiz', quizLimiter, async (req, res) => {
 app.post('/api/generate-quiz-file', quizLimiter, (req, res) => {
   upload.single('file')(req, res, async (uploadErr) => {
     if (uploadErr) {
-      const msg = uploadErr.code === 'LIMIT_FILE_SIZE'
-        ? 'File is too large. Max size is 10MB.'
-        : (uploadErr.message || 'Could not process the uploaded file.');
-      return res.status(400).json({ error: msg });
+      return res.status(400).json({ error: uploadErr.message || 'Could not process file.' });
     }
 
     try {
@@ -131,20 +114,13 @@ app.post('/api/generate-quiz-file', quizLimiter, (req, res) => {
         return res.status(400).json({ error: 'No file was uploaded.' });
       }
       if (!GEMINI_API_KEY) {
-        return res.status(500).json({ error: 'Server is missing its API key. The site owner needs to configure GEMINI_API_KEY.' });
+        return res.status(500).json({ error: 'Server is missing its API key.' });
       }
 
       const base64Data = req.file.buffer.toString('base64');
-      const filePart = {
-        inlineData: {
-          data: base64Data,
-          mimeType: req.file.mimetype
-        }
-      };
-
       const quiz = await callGeminiForQuiz([
-        filePart,
-        'Here are the study notes (as an image or document). Generate the quiz from this material.'
+        { inlineData: { data: base64Data, mimeType: req.file.mimetype } },
+        'Generate the quiz from this material.'
       ]);
 
       res.json({ quiz });
@@ -155,17 +131,15 @@ app.post('/api/generate-quiz-file', quizLimiter, (req, res) => {
   });
 });
 
-// Explicit fallback route to serve index.html for frontend single-page routing
+// Explicit root route fallback for SPA/static serving
 app.get('*', (req, res) => {
-  res.sendFile(path.join(publicPath, 'index.html'));
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
-// Run locally if not on Vercel
 if (require.main === module) {
   app.listen(PORT, () => {
-    console.log(`Notes → Quiz server running on port ${PORT}`);
+    console.log(`Server running on port ${PORT}`);
   });
 }
 
-// Export for Vercel's serverless environment
 module.exports = app;
