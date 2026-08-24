@@ -157,6 +157,15 @@ app.post('/api/generate-quiz-file', quizLimiter, (req, res) => {
   });
 });
 
+// Fallback route to serve index.html for any unhandled non-API GET request
+app.get('*', (req, res) => {
+  res.sendFile(path.join(publicPath, 'index.html'), (err) => {
+    if (err) {
+      res.sendFile(path.join(vercelPublicPath, 'index.html'));
+    }
+  });
+});
+
 // Run locally if not on Vercel
 if (require.main === module) {
   app.listen(PORT, () => {
