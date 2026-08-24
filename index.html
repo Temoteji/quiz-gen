@@ -316,10 +316,24 @@ async function generateQuiz(){
 
   try {
     const response = await fetchPromise;
-    const data = await response.json();
+    
+    // Safely parse raw text to prevent "Unexpected end of JSON input" crashes
+    const responseText = await response.text();
+    let data = {};
+    if (responseText) {
+      try {
+        data = JSON.parse(responseText);
+      } catch (parseErr) {
+        console.error('Non-JSON response received:', responseText);
+      }
+    }
 
     if(!response.ok){
-      throw new Error(data.error || 'Connection exception during processing.');
+      throw new Error(data.error || `Server error (${response.status}): ${responseText || 'Empty response'}`);
+    }
+
+    if (!data.quiz) {
+      throw new Error('Server response missing quiz data.');
     }
 
     quiz = data.quiz;
