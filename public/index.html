@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
@@ -69,7 +69,7 @@
         </div>
       </div>
       
-      <!-- PAGE 0: LANDING / LOGIN PAGE (Shown when logged out) -->
+      <!-- PAGE 0: LANDING / LOGIN PAGE -->
       <div id="pageLanding" class="page-view active-page">
         <section class="welcome" style="flex-direction: column; align-items: flex-start; gap: 20px; padding: 40px 0;">
           <div>
@@ -100,9 +100,9 @@
         </section>
         
         <section class="stats" aria-label="Study stats">
-          <div class="stat"><div class="stat-label">Quizzes made</div><div class="stat-value">0</div></div>
-          <div class="stat"><div class="stat-label">Questions answered</div><div class="stat-value">0</div></div>
-          <div class="stat"><div class="stat-label">Average score</div><div class="stat-value">0%</div></div>
+          <div class="stat"><div class="stat-label">Quizzes made</div><div class="stat-value" id="statQuizzesMade">0</div></div>
+          <div class="stat"><div class="stat-label">Questions answered</div><div class="stat-value" id="statQuestionsAnswered">0</div></div>
+          <div class="stat"><div class="stat-label">Average score</div><div class="stat-value" id="statAverageScore">0%</div></div>
         </section>
 
         <section class="panel">
@@ -194,7 +194,6 @@
           <div class="library-list full-library-list"><p style="color:var(--muted);font-size:12px;padding:10px 20px;">Loading your library...</p></div>
         </section>
       </div>
-
     </main>
   </div>
 
@@ -205,9 +204,7 @@
         <h3 style="font-size: 18px; font-weight: 700;">All Saved Study Sets</h3>
         <button id="closeModalBtn" style="background: none; border: none; font-size: 22px; cursor: pointer; color: var(--muted);">&times;</button>
       </div>
-      <div id="modalQuizList" style="overflow-y: auto; max-height: 60vh; display: grid; gap: 12px; padding-right: 4px;">
-        <!-- Populated dynamically via JS -->
-      </div>
+      <div id="modalQuizList" style="overflow-y: auto; max-height: 60vh; display: grid; gap: 12px; padding-right: 4px;"></div>
     </div>
   </div>
   
@@ -228,7 +225,6 @@
     
     restartBtn.onclick=resetAll;function resetAll(){notesInput.value='';clearFile();doneCard.style.display='none';quizCard.style.display='none';generatorPanel.style.display='block';quiz=[];current=0;score=0;answered=0;errorContainer.style.display='none'}notesInput.onkeydown=e=>{if((e.metaKey||e.ctrlKey)&&e.key==='Enter'){e.preventDefault();generateBtn.click()}};
     
-    // NAVIGATION LOGIC
     const navItems=document.querySelectorAll('.nav-item');
     const pageViews=document.querySelectorAll('.page-view');
 
@@ -236,33 +232,19 @@
       item.addEventListener('click',()=>{
         navItems.forEach(navItem=>navItem.classList.remove('active'));
         item.classList.add('active');
-        
         const targetId = item.getAttribute('data-target');
         pageViews.forEach(page=>{
-          if(page.id === targetId){
-            page.classList.add('active-page');
-          } else {
-            page.classList.remove('active-page');
-          }
+          if(page.id === targetId){page.classList.add('active-page')}else{page.classList.remove('active-page')}
         });
         window.scrollTo({top:0,behavior:'smooth'});
       });
     });
     
-    // DROPDOWN LOGIC
     const profileBtn = document.getElementById('profileBtn');
     const profileDropdown = document.getElementById('profileDropdown');
-    profileBtn.onclick = (e) => {
-      e.stopPropagation();
-      profileDropdown.classList.toggle('show');
-    };
-    document.addEventListener('click', (e) => {
-      if (!profileDropdown.contains(e.target)) {
-        profileDropdown.classList.remove('show');
-      }
-    });
+    profileBtn.onclick = (e) => { e.stopPropagation(); profileDropdown.classList.toggle('show'); };
+    document.addEventListener('click', (e) => { if (!profileDropdown.contains(e.target)) { profileDropdown.classList.remove('show'); } });
 
-    // "VIEW ALL" MODAL LOGIC
     const quizModal = document.getElementById('quizModal');
     const viewAllBtn = document.getElementById('viewAllBtn');
     const closeModalBtn = document.getElementById('closeModalBtn');
@@ -271,58 +253,29 @@
       try {
         const res = await fetch('/api/quizzes');
         const data = await res.json();
-        
         const listContainer = document.getElementById('modalQuizList');
         listContainer.innerHTML = '';
-
         if (data.quizzes && data.quizzes.length > 0) {
           data.quizzes.forEach((item, index) => {
             const questions = JSON.parse(item.quiz_data);
             const dateStr = new Date(item.created_at).toLocaleDateString();
-            
-            let html = `
-              <div style="border: 1px solid var(--line); border-radius: 8px; padding: 14px; background: var(--paper);">
-                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-                  <span style="font-weight: 600; color: var(--coral); font-size: 13px;">Set #${data.quizzes.length - index} (${dateStr})</span>
-                  <span style="font-size: 11px; color: var(--muted);">${questions.length} Questions</span>
-                </div>
-                <div style="display: grid; gap: 8px; margin-top: 8px;">
-            `;
-            
+            let html = `<div style="border: 1px solid var(--line); border-radius: 8px; padding: 14px; background: var(--paper);"><div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;"><span style="font-weight: 600; color: var(--coral); font-size: 13px;">Set #${data.quizzes.length - index} (${dateStr})</span><span style="font-size: 11px; color: var(--muted);">${questions.length} Questions</span></div><div style="display: grid; gap: 8px; margin-top: 8px;">`;
             questions.forEach((q, qIdx) => {
-              html += `
-                <div style="font-size: 12px; background: var(--white); padding: 10px; border: 1px solid var(--line); border-radius: 6px;">
-                  <p style="font-weight: 500; color: var(--ink);">${qIdx + 1}. ${q.question}</p>
-                  <p style="font-size: 11px; color: #345831; margin-top: 4px;"><strong>Answer:</strong> ${q.options[q.correctIndex]}</p>
-                  <p style="font-size: 11px; color: var(--muted); margin-top: 2px;"><em>${q.explanation}</em></p>
-                </div>
-              `;
+              html += `<div style="font-size: 12px; background: var(--white); padding: 10px; border: 1px solid var(--line); border-radius: 6px;"><p style="font-weight: 500; color: var(--ink);">${qIdx + 1}. ${q.question}</p><p style="font-size: 11px; color: #345831; margin-top: 4px;"><strong>Answer:</strong> ${q.options[q.correctIndex]}</p><p style="font-size: 11px; color: var(--muted); margin-top: 2px;"><em>${q.explanation}</em></p></div>`;
             });
-
             html += `</div></div>`;
             listContainer.innerHTML += html;
           });
         } else {
           listContainer.innerHTML = '<p style="color: var(--muted); text-align: center; padding: 20px; font-size: 13px;">No saved study sets found yet.</p>';
         }
-
         quizModal.style.display = 'flex';
-      } catch (err) {
-        console.error('Failed to load quizzes:', err);
-      }
+      } catch (err) {}
     }
 
     if(viewAllBtn) viewAllBtn.onclick = openQuizModal;
-
-    closeModalBtn.onclick = () => {
-      quizModal.style.display = 'none';
-    };
-
-    window.onclick = (e) => {
-      if (e.target === quizModal) {
-        quizModal.style.display = 'none';
-      }
-    };
+    closeModalBtn.onclick = () => { quizModal.style.display = 'none'; };
+    window.onclick = (e) => { if (e.target === quizModal) { quizModal.style.display = 'none'; } };
     
     async function loadDashboard(){
       try{
@@ -330,10 +283,8 @@
         const user=await userRes.json();
         
         if(user){
-          // Logged-in state
           document.getElementById('sidebarNav').style.display = 'flex';
           document.getElementById('profileContainer').style.display = 'inline-block';
-          
           document.querySelector('.app').style.gridTemplateColumns = '240px minmax(0,1fr)';
           document.querySelector('main').style.maxWidth = '1120px';
 
@@ -351,19 +302,16 @@
           
           document.querySelector('.welcome-greeting').textContent=`Good ${timeOfDay}, ${firstName}`;
           document.querySelector('.profile').textContent=firstName.charAt(0).toUpperCase();
-          
           document.getElementById('dropName').textContent = fullName;
           document.getElementById('dropEmail').textContent = userEmail;
           
           const statsRes=await fetch('/api/dashboard');
           if(statsRes.ok){
             const stats=await statsRes.json();
-            const statValues=document.querySelectorAll('.stat-value');
-            if(statValues.length>=3){
-              statValues[0].innerHTML=`${stats.quizzesMade}`;
-              statValues[1].innerHTML=`${stats.questionsAnswered}`;
-              statValues[2].innerHTML=`${stats.averageScore}%`;
-            }
+            
+            document.getElementById('statQuizzesMade').textContent = stats.quizzesMade;
+            document.getElementById('statQuestionsAnswered').textContent = stats.questionsAnswered;
+            document.getElementById('statAverageScore').textContent = `${stats.averageScore}%`;
             
             document.getElementById('dropQuizCount').textContent = stats.quizzesMade;
             document.getElementById('dropAvgScore').textContent = `${stats.averageScore}%`;
@@ -403,7 +351,6 @@
             }
           }
         } else {
-          // Logged-out state: show landing page, hide sidebar
           document.getElementById('sidebarNav').style.display = 'none';
           document.getElementById('profileContainer').style.display = 'none';
           document.querySelector('.app').style.gridTemplateColumns = '1fr';
@@ -414,7 +361,7 @@
           document.getElementById('pageGenerate').classList.remove('active-page');
           document.getElementById('pageLibrary').classList.remove('active-page');
         }
-      }catch(e){console.error(e);}
+      }catch(e){}
     }
     loadDashboard();
   </script>
