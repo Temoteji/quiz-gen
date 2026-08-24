@@ -44,13 +44,15 @@ const quizLimiter = rateLimit({
   message: { error: 'Too many requests from this device. Try again in a bit.' }
 });
 
-const SYSTEM_PROMPT = `You are a distinguished professor at a rigorous, top-tier university. Your task is to generate exactly 10 highly challenging multiple-choice questions based on the provided study notes.
+const SYSTEM_PROMPT = `You are a distinguished professor at a rigorous, top-tier university. Your task is to generate exactly 10 multiple-choice questions based on the provided study notes.
 
 CRITICAL INSTRUCTIONS:
-1. Test deep conceptual understanding and theoretical knowledge, not mere rote memorization or exact phrasing.
-2. DO NOT create situational, scenario-based, or applied-case questions. Keep the questions strictly academic and focused on the core concepts.
-Construct high-difficulty items. The incorrect choices (distractors) must be strictly plausible—grounded in genuine, common misconceptions, cognitive biases, or closely adjacent technical concepts rather than obvious or throwaway errors. Maintain a clear, accessible B1-level English vocabulary to ensure the challenge stems from conceptual depth rather than linguistic complexity.
-4. Respond with ONLY a raw, valid JSON array. You must absolutely omit all markdown formatting, code fences (no \`\`\`json), and conversational text. The output must be immediately parseable by JSON.parse().
+1. Test moderate conceptual understanding and key principles, balancing theory with foundational application.
+2. Mix conceptual questions with clear, straightforward examples to keep the test balanced, accessible, and easier to understand.
+3. Construct moderately challenging items. The incorrect choices (distractors) must be plausible and grounded in common misunderstandings, but should avoid overly obscure or confusing cognitive traps. Maintain a clear, accessible B1-level English vocabulary so the test is easy to read.
+4. Randomize the position of the correct answer across the 10 questions so that it is evenly distributed among indices 0, 1, 2, and 3, and ensure the correctIndex accurately reflects its shuffled position.
+5. Vary the question topics dynamically. Do not reuse the exact same concepts or phrasing across generations; select a fresh set of sub-topics and angles from the provided study notes every time.
+6. Respond with ONLY a raw, valid JSON array. You must absolutely omit all markdown formatting, code fences (no \`\`\`json), and conversational text. The output must be immediately parseable by JSON.parse().
 
 The output must exactly match this structure:
 [
@@ -65,14 +67,26 @@ The output must exactly match this structure:
 async function callGeminiForQuiz(contentParts) {
   try {
     const model = genAI.getGenerativeModel({ 
-      model: 'gemini-3.6-flash',
-      systemInstruction: SYSTEM_PROMPT 
+      model: 'gemini-2.5-flash', // Or 'gemini-3.6-flash' depending on your preference
+      systemInstruction: SYSTEM_PROMPT,
+      generationConfig: {
+        temperature: 0.85, // <-- Fixes repetition by introducing creativity & variation
+      }
     });
 
     const result = await model.generateContent(contentParts);
     const responseText = result.response.text();
 
-    let raw = responseText.replace(/```json|```/g, '').trim();
+    // Clean markdown code fences safely
+    let raw = responseText.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/\s*```$/, '').trim();
+    
+    // Fallback search if model still adds extra text outside code blocks
+    const firstBracket = raw.indexOf('[');
+    const lastBracket = raw.lastIndexOf(']');
+    if (firstBracket !== -1 && lastBracket !== -1) {
+      raw = raw.substring(firstBracket, lastBracket + 1);
+    }
+
     let quiz = JSON.parse(raw);
 
     if (!Array.isArray(quiz) || quiz.length === 0) {
@@ -120,7 +134,7 @@ app.post('/api/generate-quiz-file', quizLimiter, (req, res) => {
       const base64Data = req.file.buffer.toString('base64');
       const quiz = await callGeminiForQuiz([
         { inlineData: { data: base64Data, mimeType: req.file.mimetype } },
-        'Generate the quiz from this material.'
+        'Generate the quiz from this material with dynamic topics.'
       ]);
 
       res.json({ quiz });
