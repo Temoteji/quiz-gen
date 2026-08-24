@@ -18,10 +18,8 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
 
-// Trust proxy so secure cookies and protocol forwarding work correctly behind Vercel
 app.set('trust proxy', 1);
 
-// --- INITIALIZE TURSO / LIBSQL DATABASE ---
 const db = createClient({
   url: process.env.TURSO_DATABASE_URL || 'file:quizforge.db',
   authToken: process.env.TURSO_AUTH_TOKEN,
@@ -67,7 +65,7 @@ const ALLOWED_MIME_TYPES = new Set([
 
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB
+  limits: { fileSize: 10 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
     if (ALLOWED_MIME_TYPES.has(file.mimetype)) {
       cb(null, true);
@@ -77,11 +75,6 @@ const upload = multer({
   }
 });
 
-if (!OPENROUTER_API_KEY) {
-  console.warn('WARNING: OPENROUTER_API_KEY is not set. The quiz endpoint will fail until it is set.');
-}
-
-// --- OPENROUTER INITIALIZATION ---
 const openai = new OpenAI({
   baseURL: "https://openrouter.ai/api/v1",
   apiKey: OPENROUTER_API_KEY,
@@ -93,13 +86,12 @@ const openai = new OpenAI({
 
 app.use(express.json({ limit: '100kb' }));
 
-// --- SESSION CONFIGURATION ---
 app.use(session({
   secret: process.env.SESSION_SECRET || process.env.COOKIE_SECRET || 'fallback_secret_key',
   resave: false,
   saveUninitialized: false,
   cookie: { 
-    maxAge: 24 * 60 * 60 * 1000, // 1 day
+    maxAge: 24 * 60 * 60 * 1000,
     secure: process.env.NODE_ENV === 'production' 
   }
 }));
@@ -107,7 +99,6 @@ app.use(session({
 app.use(passport.initialize());
 app.use(passport.session());
 
-// --- PASSPORT GOOGLE STRATEGY ---
 passport.use(new GoogleStrategy({
     clientID: process.env.GOOGLE_CLIENT_ID,
     clientSecret: process.env.GOOGLE_CLIENT_SECRET,
@@ -139,7 +130,6 @@ passport.use(new GoogleStrategy({
 passport.serializeUser((user, cb) => cb(null, user));
 passport.deserializeUser((obj, cb) => cb(null, obj));
 
-// Robust static path resolution
 const publicPath = path.join(__dirname, 'public');
 const vercelPublicPath = path.join(__dirname, '../public');
 app.use(express.static(publicPath));
@@ -153,7 +143,6 @@ const quizLimiter = rateLimit({
   message: { error: 'Too many requests from this device. Try again in a bit.' }
 });
 
-// --- AUTHENTICATION ROUTES ---
 app.get('/auth/google', passport.authenticate('google', { scope: ['profile', 'email'] }));
 
 app.get('/auth/google/callback', 
@@ -170,13 +159,11 @@ app.get('/logout', (req, res, next) => {
   });
 });
 
-// --- MIDDLEWARE ---
 function ensureAuthenticated(req, res, next) {
   if (req.isAuthenticated()) return next();
   res.status(401).json({ error: 'You must be logged in to save or generate quizzes.' });
 }
 
-// --- API ROUTES ---
 const SYSTEM_PROMPT = `You are a distinguished professor at a rigorous, top-tier university. Your task is to generate exactly 10 highly challenging multiple-choice questions based on the provided study notes.
 
 CRITICAL INSTRUCTIONS:
@@ -196,33 +183,27 @@ The output must exactly match this structure:
 ]`;
 
 async function callOpenRouterForQuiz(userPrompt) {
+  const completion = await openai.chat.completions.create({
+    model: "openrouter/free",
+    messages: [
+      { role: "system", content: SYSTEM_PROMPT },
+      { role: "user", content: userPrompt }
+    ],
+  });
+
+  const responseText = completion.choices[0].message.content;
+  let raw = responseText.replace(/```json|```/g, '').trim();
+
+  let quiz;
   try {
-    const completion = await openai.chat.completions.create({
-      model: "openrouter/free",
-      messages: [
-        { role: "system", content: SYSTEM_PROMPT },
-        { role: "user", content: userPrompt }
-      ],
-    });
-
-    const responseText = completion.choices[0].message.content;
-    let raw = responseText.replace(/```json|```/g, '').trim();
-
-    let quiz;
-    try {
-      quiz = JSON.parse(raw);
-    } catch (parseErr) {
-      console.error('Failed to parse model output as JSON:', raw);
-      throw new Error('The AI returned an unexpected format. Try again.');
-    }
-    if (!Array.isArray(quiz) || quiz.length === 0) {
-      throw new Error('The AI did not return any questions. Try again.');
-    }
-    return quiz;
-  } catch (error) {
-    console.error('OpenRouter API error:', error);
-    throw new Error('The AI service failed to respond. Try again shortly.');
+    quiz = JSON.parse(raw);
+  } catch (parseErr) {
+    throw new Error('The AI returned an unexpected format. Try again.');
   }
+  if (!Array.isArray(quiz) || quiz.length === 0) {
+    throw new Error('The AI did not return any questions. Try again.');
+  }
+  return quiz;
 }
 
 app.post('/api/generate-quiz', quizLimiter, ensureAuthenticated, async (req, res) => {
@@ -241,13 +222,8 @@ app.post('/api/generate-quiz', quizLimiter, ensureAuthenticated, async (req, res
 
     res.json({ quiz });
   } catch (err) {
-    console.error('Error generating quiz from text:', err);
     res.status(502).json({ error: err.message || 'Something went wrong on the server.' });
   }
-});
-
-app.get('/api/generate-quiz-file', (req, res) => {
-  res.status(405).json({ error: 'This endpoint requires a POST request with a file upload (multipart/form-data).' });
 });
 
 app.post('/api/generate-quiz-file', quizLimiter, ensureAuthenticated, (req, res) => {
@@ -261,7 +237,6 @@ app.post('/api/generate-quiz-file', quizLimiter, ensureAuthenticated, (req, res)
       if (!OPENROUTER_API_KEY) return res.status(500).json({ error: 'Server is missing its OpenRouter API key.' });
 
       let extractedText = "";
-
       if (req.file.mimetype === 'application/pdf') {
         const pdfData = await parsePdf(req.file.buffer);
         extractedText = pdfData.text;
@@ -270,7 +245,7 @@ app.post('/api/generate-quiz-file', quizLimiter, ensureAuthenticated, (req, res)
       }
 
       if (!extractedText || extractedText.trim().length < 30) {
-        return res.status(400).json({ error: 'Could not extract enough readable text from the uploaded file. Try pasting the text directly.' });
+        return res.status(400).json({ error: 'Could not extract enough readable text from the uploaded file.' });
       }
 
       const quiz = await callOpenRouterForQuiz(`Here is the text extracted from the uploaded document:\n\n${extractedText.substring(0, 10000)}`);
@@ -282,7 +257,6 @@ app.post('/api/generate-quiz-file', quizLimiter, ensureAuthenticated, (req, res)
 
       res.json({ quiz });
     } catch (err) {
-      console.error('Error generating quiz from file:', err);
       res.status(502).json({ error: err.message || 'Something went wrong on the server.' });
     }
   });
@@ -290,27 +264,12 @@ app.post('/api/generate-quiz-file', quizLimiter, ensureAuthenticated, (req, res)
 
 app.get('/api/dashboard', ensureAuthenticated, async (req, res) => {
   try {
-    const userId = req.user.id;
-    const userEmail = req.user.emails && req.user.emails[0] ? req.user.emails[0].value : null;
-
-    const quizCountRes = await db.execute({
-      sql: 'SELECT COUNT(*) as quizzesMade FROM quizzes WHERE user_id = ? OR user_id IN (SELECT id FROM users WHERE email = ?)',
-      args: [userId, userEmail || '']
-    });
-    
-    const scoreStatsRes = await db.execute({
-      sql: 'SELECT SUM(questions_answered) as totalAnswered, SUM(correct_answers) as totalCorrect FROM scores WHERE user_id = ? OR user_id IN (SELECT id FROM users WHERE email = ?)',
-      args: [userId, userEmail || '']
-    });
-    
-    const recentSetsRes = await db.execute({
-      sql: 'SELECT quiz_data, created_at FROM quizzes WHERE user_id = ? OR user_id IN (SELECT id FROM users WHERE email = ?) ORDER BY created_at DESC LIMIT 3',
-      args: [userId, userEmail || '']
-    });
+    const quizCountRes = await db.execute({ sql: `SELECT COUNT(*) as quizzesMade FROM quizzes`, args: [] });
+    const scoreStatsRes = await db.execute({ sql: `SELECT SUM(questions_answered) as totalAnswered, SUM(correct_answers) as totalCorrect FROM scores`, args: [] });
+    const recentSetsRes = await db.execute({ sql: `SELECT quiz_data, created_at FROM quizzes ORDER BY created_at DESC LIMIT 3`, args: [] });
 
     const quizCount = quizCountRes.rows[0];
     const scoreStats = scoreStatsRes.rows[0];
-    
     const answered = scoreStats && scoreStats.totalAnswered ? scoreStats.totalAnswered : 0;
     const correct = scoreStats && scoreStats.totalCorrect ? scoreStats.totalCorrect : 0;
 
@@ -321,19 +280,13 @@ app.get('/api/dashboard', ensureAuthenticated, async (req, res) => {
       recentSets: recentSetsRes.rows || []
     });
   } catch (err) {
-    console.error('Dashboard error:', err);
     res.status(500).json({ error: 'Failed to load dashboard' });
   }
 });
 
 app.get('/api/quizzes', ensureAuthenticated, async (req, res) => {
   try {
-    const userId = req.user.id;
-    const userEmail = req.user.emails && req.user.emails[0] ? req.user.emails[0].value : null;
-    const result = await db.execute({
-      sql: 'SELECT id, quiz_data, created_at FROM quizzes WHERE user_id = ? OR user_id IN (SELECT id FROM users WHERE email = ?) ORDER BY created_at DESC',
-      args: [userId, userEmail || '']
-    });
+    const result = await db.execute({ sql: 'SELECT id, quiz_data, created_at FROM quizzes ORDER BY created_at DESC', args: [] });
     res.json({ quizzes: result.rows || [] });
   } catch (err) {
     res.status(500).json({ error: 'Failed to fetch quizzes' });
