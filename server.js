@@ -37,11 +37,9 @@ const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
 
 app.use(express.json({ limit: '100kb' }));
 
-// Robust static path resolution: checks both local and Vercel serverless layouts
+// Clean static path configuration for Vercel and local root layout
 const publicPath = path.join(__dirname, 'public');
-const vercelPublicPath = path.join(__dirname, '../public');
 app.use(express.static(publicPath));
-app.use(express.static(vercelPublicPath));
 
 const quizLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -157,13 +155,9 @@ app.post('/api/generate-quiz-file', quizLimiter, (req, res) => {
   });
 });
 
-// Fallback route to serve index.html for any unhandled non-API GET request
+// Explicit fallback route to serve index.html for frontend single-page routing
 app.get('*', (req, res) => {
-  res.sendFile(path.join(publicPath, 'index.html'), (err) => {
-    if (err) {
-      res.sendFile(path.join(vercelPublicPath, 'index.html'));
-    }
-  });
+  res.sendFile(path.join(publicPath, 'index.html'));
 });
 
 // Run locally if not on Vercel
