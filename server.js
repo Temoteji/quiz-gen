@@ -65,7 +65,7 @@ The output must exactly match this structure:
 async function callGeminiForQuiz(contentParts) {
   try {
     const model = genAI.getGenerativeModel({ 
-      model: 'gemini-2.0-flash',
+      model: 'gemini-2.5-flash',
       systemInstruction: SYSTEM_PROMPT 
     });
 
