@@ -36,7 +36,9 @@ if (!GEMINI_API_KEY) {
 const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
 
 app.use(express.json({ limit: '100kb' }));
-app.use(express.static(path.join(__dirname, 'public')));
+
+// FIXED: Adjusted path to look up one level from 'api/' to find the 'public' folder
+app.use(express.static(path.join(__dirname, '../public')));
 
 const quizLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
