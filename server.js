@@ -100,7 +100,7 @@ app.use(session({
   saveUninitialized: false,
   cookie: { 
     maxAge: 24 * 60 * 60 * 1000, // 1 day
-    secure: process.env.NODE_ENV === 'production' // secure cookies on production
+    secure: process.env.NODE_ENV === 'production' 
   }
 }));
 
@@ -112,12 +112,13 @@ passport.use(new GoogleStrategy({
     clientID: process.env.GOOGLE_CLIENT_ID,
     clientSecret: process.env.GOOGLE_CLIENT_SECRET,
     callbackURL: process.env.NODE_ENV === 'production' 
-      ? `${process.env.VERCEL_URL ? 'https://' + process.env.VERCEL_URL : 'https://quiz-gen-topaz.vercel.app'}/auth/google/callback`
+      ? "https://quiz-gen-topaz.vercel.app/auth/google/callback" 
       : "http://localhost:3000/auth/google/callback",
     proxy: true
   },
   async function(accessToken, refreshToken, profile, cb) {
     try {
+      const email = profile.emails && profile.emails[0] ? profile.emails[0].value : null;
       const rs = await db.execute({
         sql: 'SELECT * FROM users WHERE id = ?',
         args: [profile.id]
@@ -125,7 +126,7 @@ passport.use(new GoogleStrategy({
       if (rs.rows.length === 0) {
         await db.execute({
           sql: 'INSERT INTO users (id, name, email) VALUES (?, ?, ?)',
-          args: [profile.id, profile.displayName, profile.emails[0].value]
+          args: [profile.id, profile.displayName, email]
         });
       }
       return cb(null, profile);
@@ -245,7 +246,6 @@ app.post('/api/generate-quiz', quizLimiter, ensureAuthenticated, async (req, res
   }
 });
 
-// Friendly GET handler so visiting the route directly in a browser doesn't throw a raw "Cannot GET" error
 app.get('/api/generate-quiz-file', (req, res) => {
   res.status(405).json({ error: 'This endpoint requires a POST request with a file upload (multipart/form-data).' });
 });
@@ -291,20 +291,21 @@ app.post('/api/generate-quiz-file', quizLimiter, ensureAuthenticated, (req, res)
 app.get('/api/dashboard', ensureAuthenticated, async (req, res) => {
   try {
     const userId = req.user.id;
+    const userEmail = req.user.emails && req.user.emails[0] ? req.user.emails[0].value : null;
 
     const quizCountRes = await db.execute({
-      sql: 'SELECT COUNT(*) as quizzesMade FROM quizzes WHERE user_id = ?',
-      args: [userId]
+      sql: 'SELECT COUNT(*) as quizzesMade FROM quizzes WHERE user_id = ? OR user_id IN (SELECT id FROM users WHERE email = ?)',
+      args: [userId, userEmail || '']
     });
     
     const scoreStatsRes = await db.execute({
-      sql: 'SELECT SUM(questions_answered) as totalAnswered, SUM(correct_answers) as totalCorrect FROM scores WHERE user_id = ?',
-      args: [userId]
+      sql: 'SELECT SUM(questions_answered) as totalAnswered, SUM(correct_answers) as totalCorrect FROM scores WHERE user_id = ? OR user_id IN (SELECT id FROM users WHERE email = ?)',
+      args: [userId, userEmail || '']
     });
     
     const recentSetsRes = await db.execute({
-      sql: 'SELECT quiz_data, created_at FROM quizzes WHERE user_id = ? ORDER BY created_at DESC LIMIT 3',
-      args: [userId]
+      sql: 'SELECT quiz_data, created_at FROM quizzes WHERE user_id = ? OR user_id IN (SELECT id FROM users WHERE email = ?) ORDER BY created_at DESC LIMIT 3',
+      args: [userId, userEmail || '']
     });
 
     const quizCount = quizCountRes.rows[0];
@@ -328,9 +329,10 @@ app.get('/api/dashboard', ensureAuthenticated, async (req, res) => {
 app.get('/api/quizzes', ensureAuthenticated, async (req, res) => {
   try {
     const userId = req.user.id;
+    const userEmail = req.user.emails && req.user.emails[0] ? req.user.emails[0].value : null;
     const result = await db.execute({
-      sql: 'SELECT id, quiz_data, created_at FROM quizzes WHERE user_id = ? ORDER BY created_at DESC',
-      args: [userId]
+      sql: 'SELECT id, quiz_data, created_at FROM quizzes WHERE user_id = ? OR user_id IN (SELECT id FROM users WHERE email = ?) ORDER BY created_at DESC',
+      args: [userId, userEmail || '']
     });
     res.json({ quizzes: result.rows || [] });
   } catch (err) {
@@ -351,7 +353,6 @@ app.post('/api/save-score', ensureAuthenticated, async (req, res) => {
   }
 });
 
-// Run locally if not on Vercel
 if (require.main === module) {
   app.listen(PORT, () => {
     console.log(`Notes → Quiz server running on port ${PORT}`);
