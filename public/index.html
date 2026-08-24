@@ -13,8 +13,8 @@
     body{min-height:100vh;color:var(--ink);background:var(--paper);font-family:'DM Sans',sans-serif;background-image:radial-gradient(#d8d4c8 .7px,transparent .7px);background-size:18px 18px}
     button,textarea,select{font:inherit}
     button{cursor:pointer}
-    .app{display:grid;grid-template-columns:240px minmax(0,1fr);min-height:100vh;max-width:1440px;margin:auto;background:rgba(248,246,240,.9)}
-    aside{padding:30px 22px;border-right:1px solid var(--line);display:flex;flex-direction:column;gap:48px;background:rgba(237,233,223,.72)}
+    .app{display:grid;grid-template-columns:240px minmax(0,1fr);min-height:100vh;max-width:1440px;margin:auto;background:rgba(248,246,240,.9);position:relative}
+    aside{padding:30px 22px;border-right:1px solid var(--line);display:flex;flex-direction:column;gap:48px;background:rgba(237,233,223,.95)}
     .brand{display:flex;align-items:center;gap:10px;font-weight:700;letter-spacing:-.04em;font-size:19px}
     .mark{width:34px;height:34px;display:grid;place-items:center;color:#fff;background:var(--coral);border-radius:10px 10px 10px 3px;transform:rotate(-4deg);font-family:Georgia,serif;font-size:21px}
     nav{display:grid;gap:8px}
@@ -91,7 +91,7 @@
     .done p{color:var(--muted);font-size:13px;margin-bottom:22px}
     
     /* MOBILE BURGER TOGGLE BUTTON */
-    .burger-btn { display: none; background: transparent; border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; font-size: 16px; align-items: center; gap: 6px; color: var(--ink); }
+    .burger-btn { display: none; background: transparent; border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; font-size: 14px; align-items: center; gap: 6px; color: var(--ink); font-weight: 600; }
 
     /* PROFILE DROPDOWN CSS */
     .profile-container{position:relative;display:none;text-align:center}
@@ -113,10 +113,10 @@
 
     @media(max-width:820px){
       .app{display:block}
-      .burger-btn{display:flex}
-      aside{display:none;position:absolute;top:70px;left:0;width:100%;z-index:99;box-shadow:0 10px 20px rgba(0,0,0,0.05);border-right:0;border-bottom:1px solid var(--line)}
-      aside.mobile-open{display:flex}
-      aside nav,aside .sidebar-note{display:grid}
+      .burger-btn{display:flex !important}
+      aside#sidebarNav{display:none !important;position:absolute;top:80px;left:0;width:100%;z-index:99;box-shadow:0 10px 20px rgba(0,0,0,0.08);border-right:0;border-bottom:1px solid var(--line)}
+      aside#sidebarNav.mobile-open{display:flex !important}
+      aside#sidebarNav nav,aside#sidebarNav .sidebar-note{display:grid}
       .brand{justify-content:flex-start}
       main{padding:25px 18px 45px}
       .topbar{margin-bottom:35px}
@@ -147,7 +147,7 @@
 </head>
 <body>
   <div class="app">
-    <aside id="sidebarNav" style="display: none;">
+    <aside id="sidebarNav">
       <div class="brand"><span class="mark">Q</span><span>QuizForge</span></div>
       <nav aria-label="Main navigation">
         <button class="nav-item active" data-target="pageOverview"><span class="nav-icon">home</span>Overview</button>
@@ -160,7 +160,7 @@
     <main style="max-width: 100%; width: 100%; display: flex; flex-direction: column;">
       <div class="topbar">
         <div style="display: flex; align-items: center; gap: 14px;">
-          <button class="burger-btn" id="burgerToggle" style="display: none;">☰ Menu</button>
+          <button class="burger-btn" id="burgerToggle">☰ Menu</button>
           <div>
             <div class="eyebrow date-header">Loading...</div>
             <div class="date">Your personal study desk</div>
@@ -344,9 +344,17 @@
     // MOBILE BURGER TOGGLE LOGIC
     const burgerToggle = document.getElementById('burgerToggle');
     const sidebarNav = document.getElementById('sidebarNav');
-    burgerToggle.onclick = () => {
+    burgerToggle.onclick = (e) => {
+      e.stopPropagation();
       sidebarNav.classList.toggle('mobile-open');
     };
+
+    // Close menu when clicking outside on mobile
+    document.addEventListener('click', (e) => {
+      if (!sidebarNav.contains(e.target) && e.target !== burgerToggle) {
+        sidebarNav.classList.remove('mobile-open');
+      }
+    });
 
     const navItems=document.querySelectorAll('.nav-item');
     const pageViews=document.querySelectorAll('.page-view');
@@ -359,7 +367,7 @@
         pageViews.forEach(page=>{
           if(page.id === targetId){page.classList.add('active-page')}else{page.classList.remove('active-page')}
         });
-        sidebarNav.classList.remove('mobile-open'); // Close burger menu on click
+        sidebarNav.classList.remove('mobile-open');
         window.scrollTo({top:0,behavior:'smooth'});
       });
     });
@@ -407,7 +415,6 @@
         const user=await userRes.json();
         
         if(user){
-          document.getElementById('burgerToggle').style.display = 'flex';
           document.getElementById('profileContainer').style.display = 'inline-block';
           document.querySelector('.app').style.gridTemplateColumns = '240px minmax(0,1fr)';
           document.querySelector('main').style.maxWidth = '1120px';
@@ -475,8 +482,6 @@
             }
           }
         } else {
-          document.getElementById('burgerToggle').style.display = 'none';
-          document.getElementById('sidebarNav').style.display = 'none';
           document.getElementById('profileContainer').style.display = 'none';
           document.querySelector('.app').style.gridTemplateColumns = '1fr';
           document.querySelector('main').style.maxWidth = '100%';
