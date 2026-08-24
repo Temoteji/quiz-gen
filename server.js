@@ -75,6 +75,10 @@ const upload = multer({
   }
 });
 
+if (!OPENROUTER_API_KEY) {
+  console.warn('WARNING: OPENROUTER_API_KEY is not set. The quiz endpoint will fail until it is set.');
+}
+
 const openai = new OpenAI({
   baseURL: "https://openrouter.ai/api/v1",
   apiKey: OPENROUTER_API_KEY,
@@ -87,12 +91,14 @@ const openai = new OpenAI({
 app.use(express.json({ limit: '100kb' }));
 
 app.use(session({
-  secret: process.env.SESSION_SECRET || process.env.COOKIE_SECRET || 'fallback_secret_key',
+  secret: process.env.SESSION_SECRET || 'fallback_secret_key',
   resave: false,
   saveUninitialized: false,
+  proxy: true,
   cookie: { 
     maxAge: 24 * 60 * 60 * 1000,
-    secure: process.env.NODE_ENV === 'production' 
+    secure: 'auto',
+    sameSite: 'lax'
   }
 }));
 
@@ -183,27 +189,33 @@ The output must exactly match this structure:
 ]`;
 
 async function callOpenRouterForQuiz(userPrompt) {
-  const completion = await openai.chat.completions.create({
-    model: "openrouter/free",
-    messages: [
-      { role: "system", content: SYSTEM_PROMPT },
-      { role: "user", content: userPrompt }
-    ],
-  });
-
-  const responseText = completion.choices[0].message.content;
-  let raw = responseText.replace(/```json|```/g, '').trim();
-
-  let quiz;
   try {
-    quiz = JSON.parse(raw);
-  } catch (parseErr) {
-    throw new Error('The AI returned an unexpected format. Try again.');
+    const completion = await openai.chat.completions.create({
+      model: "openrouter/free",
+      messages: [
+        { role: "system", content: SYSTEM_PROMPT },
+        { role: "user", content: userPrompt }
+      ],
+    });
+
+    const responseText = completion.choices[0].message.content;
+    let raw = responseText.replace(/```json|```/g, '').trim();
+
+    let quiz;
+    try {
+      quiz = JSON.parse(raw);
+    } catch (parseErr) {
+      console.error('Failed to parse model output as JSON:', raw);
+      throw new Error('The AI returned an unexpected format. Try again.');
+    }
+    if (!Array.isArray(quiz) || quiz.length === 0) {
+      throw new Error('The AI did not return any questions. Try again.');
+    }
+    return quiz;
+  } catch (error) {
+    console.error('OpenRouter API error:', error);
+    throw new Error('The AI service failed to respond. Try again shortly.');
   }
-  if (!Array.isArray(quiz) || quiz.length === 0) {
-    throw new Error('The AI did not return any questions. Try again.');
-  }
-  return quiz;
 }
 
 app.post('/api/generate-quiz', quizLimiter, ensureAuthenticated, async (req, res) => {
@@ -222,8 +234,13 @@ app.post('/api/generate-quiz', quizLimiter, ensureAuthenticated, async (req, res
 
     res.json({ quiz });
   } catch (err) {
+    console.error('Error generating quiz from text:', err);
     res.status(502).json({ error: err.message || 'Something went wrong on the server.' });
   }
+});
+
+app.get('/api/generate-quiz-file', (req, res) => {
+  res.status(405).json({ error: 'This endpoint requires a POST request with a file upload (multipart/form-data).' });
 });
 
 app.post('/api/generate-quiz-file', quizLimiter, ensureAuthenticated, (req, res) => {
@@ -237,6 +254,7 @@ app.post('/api/generate-quiz-file', quizLimiter, ensureAuthenticated, (req, res)
       if (!OPENROUTER_API_KEY) return res.status(500).json({ error: 'Server is missing its OpenRouter API key.' });
 
       let extractedText = "";
+
       if (req.file.mimetype === 'application/pdf') {
         const pdfData = await parsePdf(req.file.buffer);
         extractedText = pdfData.text;
@@ -245,7 +263,7 @@ app.post('/api/generate-quiz-file', quizLimiter, ensureAuthenticated, (req, res)
       }
 
       if (!extractedText || extractedText.trim().length < 30) {
-        return res.status(400).json({ error: 'Could not extract enough readable text from the uploaded file.' });
+        return res.status(400).json({ error: 'Could not extract enough readable text from the uploaded file. Try pasting the text directly.' });
       }
 
       const quiz = await callOpenRouterForQuiz(`Here is the text extracted from the uploaded document:\n\n${extractedText.substring(0, 10000)}`);
@@ -257,6 +275,7 @@ app.post('/api/generate-quiz-file', quizLimiter, ensureAuthenticated, (req, res)
 
       res.json({ quiz });
     } catch (err) {
+      console.error('Error generating quiz from file:', err);
       res.status(502).json({ error: err.message || 'Something went wrong on the server.' });
     }
   });
@@ -264,12 +283,26 @@ app.post('/api/generate-quiz-file', quizLimiter, ensureAuthenticated, (req, res)
 
 app.get('/api/dashboard', ensureAuthenticated, async (req, res) => {
   try {
-    const quizCountRes = await db.execute({ sql: `SELECT COUNT(*) as quizzesMade FROM quizzes`, args: [] });
-    const scoreStatsRes = await db.execute({ sql: `SELECT SUM(questions_answered) as totalAnswered, SUM(correct_answers) as totalCorrect FROM scores`, args: [] });
-    const recentSetsRes = await db.execute({ sql: `SELECT quiz_data, created_at FROM quizzes ORDER BY created_at DESC LIMIT 3`, args: [] });
+    const userId = req.user.id;
+
+    const quizCountRes = await db.execute({
+      sql: 'SELECT COUNT(*) as quizzesMade FROM quizzes WHERE user_id = ?',
+      args: [userId]
+    });
+    
+    const scoreStatsRes = await db.execute({
+      sql: 'SELECT SUM(questions_answered) as totalAnswered, SUM(correct_answers) as totalCorrect FROM scores WHERE user_id = ?',
+      args: [userId]
+    });
+    
+    const recentSetsRes = await db.execute({
+      sql: 'SELECT quiz_data, created_at FROM quizzes WHERE user_id = ? ORDER BY created_at DESC LIMIT 3',
+      args: [userId]
+    });
 
     const quizCount = quizCountRes.rows[0];
     const scoreStats = scoreStatsRes.rows[0];
+    
     const answered = scoreStats && scoreStats.totalAnswered ? scoreStats.totalAnswered : 0;
     const correct = scoreStats && scoreStats.totalCorrect ? scoreStats.totalCorrect : 0;
 
@@ -280,13 +313,18 @@ app.get('/api/dashboard', ensureAuthenticated, async (req, res) => {
       recentSets: recentSetsRes.rows || []
     });
   } catch (err) {
+    console.error('Dashboard error:', err);
     res.status(500).json({ error: 'Failed to load dashboard' });
   }
 });
 
 app.get('/api/quizzes', ensureAuthenticated, async (req, res) => {
   try {
-    const result = await db.execute({ sql: 'SELECT id, quiz_data, created_at FROM quizzes ORDER BY created_at DESC', args: [] });
+    const userId = req.user.id;
+    const result = await db.execute({
+      sql: 'SELECT id, quiz_data, created_at FROM quizzes WHERE user_id = ? ORDER BY created_at DESC',
+      args: [userId]
+    });
     res.json({ quizzes: result.rows || [] });
   } catch (err) {
     res.status(500).json({ error: 'Failed to fetch quizzes' });
