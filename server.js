@@ -95,7 +95,7 @@ app.use(express.json({ limit: '100kb' }));
 
 // --- SESSION CONFIGURATION ---
 app.use(session({
-  secret: process.env.SESSION_SECRET || 'fallback_secret_key',
+  secret: process.env.SESSION_SECRET || process.env.COOKIE_SECRET || 'fallback_secret_key',
   resave: false,
   saveUninitialized: false,
   cookie: { 
@@ -111,7 +111,9 @@ app.use(passport.session());
 passport.use(new GoogleStrategy({
     clientID: process.env.GOOGLE_CLIENT_ID,
     clientSecret: process.env.GOOGLE_CLIENT_SECRET,
-    callbackURL: "/auth/google/callback",
+    callbackURL: process.env.NODE_ENV === 'production' 
+      ? "https://quiz-gen-topaz.vercel.app/auth/google/callback" 
+      : "http://localhost:3000/auth/google/callback",
     proxy: true
   },
   async function(accessToken, refreshToken, profile, cb) {
