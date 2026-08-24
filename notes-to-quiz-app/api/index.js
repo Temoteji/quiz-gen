@@ -159,5 +159,5 @@ if (require.main === module) {
   });
 }
 
-// Export the app for Vercel's serverless environment
+// Export for Vercel's serverless environment
 module.exports = app;
