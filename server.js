@@ -245,6 +245,11 @@ app.post('/api/generate-quiz', quizLimiter, ensureAuthenticated, async (req, res
   }
 });
 
+// Friendly GET handler so visiting the route directly in a browser doesn't throw a raw "Cannot GET" error
+app.get('/api/generate-quiz-file', (req, res) => {
+  res.status(405).json({ error: 'This endpoint requires a POST request with a file upload (multipart/form-data).' });
+});
+
 app.post('/api/generate-quiz-file', quizLimiter, ensureAuthenticated, (req, res) => {
   upload.single('file')(req, res, async (uploadErr) => {
     if (uploadErr) {
