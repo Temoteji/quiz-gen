@@ -1,8 +1,12 @@
 {
   "version": 2,
-  "rewrites": [
+  "routes": [
     {
-      "source": "/(.*)",
+      "src": "/api/(.*)",
+      "destination": "/server.js"
+    },
+    {
+      "src": "/(.*)",
       "destination": "/server.js"
     }
   ]
