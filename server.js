@@ -3,11 +3,56 @@ const express = require('express');
 const rateLimit = require('express-rate-limit');
 const multer = require('multer');
 const path = require('path');
-const { GoogleGenerativeAI } = require('@google/generative-ai');
+const OpenAI = require('openai');
+const session = require('express-session');
+const passport = require('passport');
+const GoogleStrategy = require('passport-google-oauth20').Strategy;
+const { createClient } = require('@libsql/client');
+const pdfParse = require('pdf-parse');
+
+const parsePdf = async (buffer) => {
+  return typeof pdfParse === 'function' ? pdfParse(buffer) : pdfParse.default(buffer);
+};
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
+
+// --- INITIALIZE TURSO / LIBSQL DATABASE ---
+const db = createClient({
+  url: process.env.TURSO_DATABASE_URL || 'file:quizforge.db',
+  authToken: process.env.TURSO_AUTH_TOKEN,
+});
+
+async function initDb() {
+  await db.execute(`
+    CREATE TABLE IF NOT EXISTS users (
+      id TEXT PRIMARY KEY,
+      name TEXT,
+      email TEXT
+    )
+  `);
+  await db.execute(`
+    CREATE TABLE IF NOT EXISTS quizzes (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id TEXT,
+      quiz_data TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY(user_id) REFERENCES users(id)
+    )
+  `);
+  await db.execute(`
+    CREATE TABLE IF NOT EXISTS scores (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id TEXT,
+      questions_answered INTEGER,
+      correct_answers INTEGER,
+      FOREIGN KEY(user_id) REFERENCES users(id)
+    )
+  `);
+  console.log('Connected to Turso / SQLite database.');
+}
+initDb().catch(err => console.error('Database initialization error:', err));
 
 const ALLOWED_MIME_TYPES = new Set([
   'image/jpeg',
@@ -29,12 +74,66 @@ const upload = multer({
   }
 });
 
-const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
+if (!OPENROUTER_API_KEY) {
+  console.warn('WARNING: OPENROUTER_API_KEY is not set. The quiz endpoint will fail until it is set.');
+}
+
+// --- OPENROUTER INITIALIZATION ---
+const openai = new OpenAI({
+  baseURL: "https://openrouter.ai/api/v1",
+  apiKey: OPENROUTER_API_KEY,
+  defaultHeaders: {
+    "HTTP-Referer": "http://localhost:3000",
+    "X-Title": "QuizForge",
+  }
+});
 
 app.use(express.json({ limit: '100kb' }));
 
-// Vercel serverless static path resolution
-app.use(express.static(path.join(__dirname, 'public')));
+// --- SESSION CONFIGURATION ---
+app.use(session({
+  secret: process.env.SESSION_SECRET || 'fallback_secret_key',
+  resave: false,
+  saveUninitialized: false,
+  cookie: { maxAge: 24 * 60 * 60 * 1000 } // 1 day
+}));
+
+app.use(passport.initialize());
+app.use(passport.session());
+
+// --- PASSPORT GOOGLE STRATEGY ---
+passport.use(new GoogleStrategy({
+    clientID: process.env.GOOGLE_CLIENT_ID,
+    clientSecret: process.env.GOOGLE_CLIENT_SECRET,
+    callbackURL: "http://localhost:3000/auth/google/callback"
+  },
+  async function(accessToken, refreshToken, profile, cb) {
+    try {
+      const rs = await db.execute({
+        sql: 'SELECT * FROM users WHERE id = ?',
+        args: [profile.id]
+      });
+      if (rs.rows.length === 0) {
+        await db.execute({
+          sql: 'INSERT INTO users (id, name, email) VALUES (?, ?, ?)',
+          args: [profile.id, profile.displayName, profile.emails[0].value]
+        });
+      }
+      return cb(null, profile);
+    } catch (err) {
+      return cb(err);
+    }
+  }
+));
+
+passport.serializeUser((user, cb) => cb(null, user));
+passport.deserializeUser((obj, cb) => cb(null, obj));
+
+// Robust static path resolution
+const publicPath = path.join(__dirname, 'public');
+const vercelPublicPath = path.join(__dirname, '../public');
+app.use(express.static(publicPath));
+app.use(express.static(vercelPublicPath));
 
 const quizLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -44,15 +143,37 @@ const quizLimiter = rateLimit({
   message: { error: 'Too many requests from this device. Try again in a bit.' }
 });
 
-const SYSTEM_PROMPT = `You are a distinguished professor at a rigorous, top-tier university. Your task is to generate exactly 10 multiple-choice questions based on the provided study notes.
+// --- AUTHENTICATION ROUTES ---
+app.get('/auth/google', passport.authenticate('google', { scope: ['profile', 'email'] }));
+
+app.get('/auth/google/callback', 
+  passport.authenticate('google', { failureRedirect: '/' }),
+  (req, res) => res.redirect('/')
+);
+
+app.get('/api/user', (req, res) => res.json(req.user || null));
+
+app.get('/logout', (req, res, next) => {
+  req.logout((err) => {
+    if (err) return next(err);
+    res.redirect('/');
+  });
+});
+
+// --- MIDDLEWARE ---
+function ensureAuthenticated(req, res, next) {
+  if (req.isAuthenticated()) return next();
+  res.status(401).json({ error: 'You must be logged in to save or generate quizzes.' });
+}
+
+// --- API ROUTES ---
+const SYSTEM_PROMPT = `You are a distinguished professor at a rigorous, top-tier university. Your task is to generate exactly 10 highly challenging multiple-choice questions based on the provided study notes.
 
 CRITICAL INSTRUCTIONS:
-1. Test moderate conceptual understanding and key principles, balancing theory with foundational application.
-2. Mix conceptual questions with clear, straightforward examples to keep the test balanced, accessible, and easier to understand.
-3. Construct moderately challenging items. The incorrect choices (distractors) must be plausible and grounded in common misunderstandings, but should avoid overly obscure or confusing cognitive traps. Maintain a clear, accessible B1-level English vocabulary so the test is easy to read.
-4. Randomize the position of the correct answer across the 10 questions so that it is evenly distributed among indices 0, 1, 2, and 3, and ensure the correctIndex accurately reflects its shuffled position.
-5. Vary the question topics dynamically. Do not reuse the exact same concepts or phrasing across generations; select a fresh set of sub-topics and angles from the provided study notes every time.
-6. Respond with ONLY a raw, valid JSON array. You must absolutely omit all markdown formatting, code fences (no \`\`\`json), and conversational text. The output must be immediately parseable by JSON.parse().
+1. Test deep conceptual understanding and theoretical knowledge, not mere rote memorization or exact phrasing.
+2. DO NOT create situational, scenario-based, or applied-case questions. Keep the questions strictly academic and focused on the core concepts.
+3. Make the questions difficult. The incorrect options (distractors) must be highly plausible, common misconceptions or closely related concepts, not obvious throwaways.
+4. Respond with ONLY a raw, valid JSON array. You must absolutely omit all markdown formatting, code fences (no \`\`\`json), and conversational text. The output must be immediately parseable by JSON.parse().
 
 The output must exactly match this structure:
 [
@@ -64,52 +185,50 @@ The output must exactly match this structure:
   }
 ]`;
 
-async function callGeminiForQuiz(contentParts) {
+async function callOpenRouterForQuiz(userPrompt) {
   try {
-    const model = genAI.getGenerativeModel({ 
-      model: 'gemini-2.5-flash', // Or 'gemini-3.6-flash' depending on your preference
-      systemInstruction: SYSTEM_PROMPT,
-      generationConfig: {
-        temperature: 0.85, // <-- Fixes repetition by introducing creativity & variation
-      }
+    const completion = await openai.chat.completions.create({
+      model: "openrouter/free",
+      messages: [
+        { role: "system", content: SYSTEM_PROMPT },
+        { role: "user", content: userPrompt }
+      ],
     });
 
-    const result = await model.generateContent(contentParts);
-    const responseText = result.response.text();
+    const responseText = completion.choices[0].message.content;
+    let raw = responseText.replace(/```json|```/g, '').trim();
 
-    // Clean markdown code fences safely
-    let raw = responseText.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/\s*```$/, '').trim();
-    
-    // Fallback search if model still adds extra text outside code blocks
-    const firstBracket = raw.indexOf('[');
-    const lastBracket = raw.lastIndexOf(']');
-    if (firstBracket !== -1 && lastBracket !== -1) {
-      raw = raw.substring(firstBracket, lastBracket + 1);
+    let quiz;
+    try {
+      quiz = JSON.parse(raw);
+    } catch (parseErr) {
+      console.error('Failed to parse model output as JSON:', raw);
+      throw new Error('The AI returned an unexpected format. Try again.');
     }
-
-    let quiz = JSON.parse(raw);
-
     if (!Array.isArray(quiz) || quiz.length === 0) {
       throw new Error('The AI did not return any questions. Try again.');
     }
     return quiz;
   } catch (error) {
-    console.error('Gemini API error:', error);
-    throw new Error(error.message || 'The AI service failed to respond. Try again shortly.');
+    console.error('OpenRouter API error:', error);
+    throw new Error('The AI service failed to respond. Try again shortly.');
   }
 }
 
-app.post('/api/generate-quiz', quizLimiter, async (req, res) => {
+app.post('/api/generate-quiz', quizLimiter, ensureAuthenticated, async (req, res) => {
   try {
     const notes = (req.body && req.body.notes ? String(req.body.notes) : '').trim();
-    if (notes.length < 30) {
-      return res.status(400).json({ error: 'Notes are too short to build a quiz from.' });
-    }
-    if (!GEMINI_API_KEY) {
-      return res.status(500).json({ error: 'Server is missing its API key.' });
-    }
+    if (notes.length < 30) return res.status(400).json({ error: 'Notes are too short to build a quiz from.' });
+    if (notes.length > 12000) return res.status(400).json({ error: 'Notes are too long. Try a shorter excerpt.' });
+    if (!OPENROUTER_API_KEY) return res.status(500).json({ error: 'Server is missing its OpenRouter API key.' });
 
-    const quiz = await callGeminiForQuiz([`Here are the notes:\n\n${notes}`]);
+    const quiz = await callOpenRouterForQuiz(`Here are the notes:\n\n${notes}`);
+    
+    await db.execute({
+      sql: 'INSERT INTO quizzes (user_id, quiz_data) VALUES (?, ?)',
+      args: [req.user.id, JSON.stringify(quiz)]
+    });
+
     res.json({ quiz });
   } catch (err) {
     console.error('Error generating quiz from text:', err);
@@ -117,25 +236,35 @@ app.post('/api/generate-quiz', quizLimiter, async (req, res) => {
   }
 });
 
-app.post('/api/generate-quiz-file', quizLimiter, (req, res) => {
+app.post('/api/generate-quiz-file', quizLimiter, ensureAuthenticated, (req, res) => {
   upload.single('file')(req, res, async (uploadErr) => {
     if (uploadErr) {
-      return res.status(400).json({ error: uploadErr.message || 'Could not process file.' });
+      const msg = uploadErr.code === 'LIMIT_FILE_SIZE' ? 'File is too large. Max size is 10MB.' : (uploadErr.message || 'Could not process the uploaded file.');
+      return res.status(400).json({ error: msg });
     }
-
     try {
-      if (!req.file) {
-        return res.status(400).json({ error: 'No file was uploaded.' });
-      }
-      if (!GEMINI_API_KEY) {
-        return res.status(500).json({ error: 'Server is missing its API key.' });
+      if (!req.file) return res.status(400).json({ error: 'No file was uploaded.' });
+      if (!OPENROUTER_API_KEY) return res.status(500).json({ error: 'Server is missing its OpenRouter API key.' });
+
+      let extractedText = "";
+
+      if (req.file.mimetype === 'application/pdf') {
+        const pdfData = await parsePdf(req.file.buffer);
+        extractedText = pdfData.text;
+      } else {
+        extractedText = `Uploaded file name: ${req.file.originalname}. Please generate academic questions based on standard themes matching this file title.`;
       }
 
-      const base64Data = req.file.buffer.toString('base64');
-      const quiz = await callGeminiForQuiz([
-        { inlineData: { data: base64Data, mimeType: req.file.mimetype } },
-        'Generate the quiz from this material with dynamic topics.'
-      ]);
+      if (!extractedText || extractedText.trim().length < 30) {
+        return res.status(400).json({ error: 'Could not extract enough readable text from the uploaded file. Try pasting the text directly.' });
+      }
+
+      const quiz = await callOpenRouterForQuiz(`Here is the text extracted from the uploaded document:\n\n${extractedText.substring(0, 10000)}`);
+
+      await db.execute({
+        sql: 'INSERT INTO quizzes (user_id, quiz_data) VALUES (?, ?)',
+        args: [req.user.id, JSON.stringify(quiz)]
+      });
 
       res.json({ quiz });
     } catch (err) {
@@ -145,14 +274,73 @@ app.post('/api/generate-quiz-file', quizLimiter, (req, res) => {
   });
 });
 
-// Explicit root route fallback for SPA/static serving
-app.get('*', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+app.get('/api/dashboard', ensureAuthenticated, async (req, res) => {
+  try {
+    const userId = req.user.id;
+
+    const quizCountRes = await db.execute({
+      sql: 'SELECT COUNT(*) as quizzesMade FROM quizzes WHERE user_id = ?',
+      args: [userId]
+    });
+    
+    const scoreStatsRes = await db.execute({
+      sql: 'SELECT SUM(questions_answered) as totalAnswered, SUM(correct_answers) as totalCorrect FROM scores WHERE user_id = ?',
+      args: [userId]
+    });
+    
+    const recentSetsRes = await db.execute({
+      sql: 'SELECT quiz_data, created_at FROM quizzes WHERE user_id = ? ORDER BY created_at DESC LIMIT 3',
+      args: [userId]
+    });
+
+    const quizCount = quizCountRes.rows[0];
+    const scoreStats = scoreStatsRes.rows[0];
+    
+    const answered = scoreStats && scoreStats.totalAnswered ? scoreStats.totalAnswered : 0;
+    const correct = scoreStats && scoreStats.totalCorrect ? scoreStats.totalCorrect : 0;
+
+    res.json({
+      quizzesMade: quizCount ? quizCount.quizzesMade : 0,
+      questionsAnswered: answered,
+      averageScore: answered > 0 ? Math.round((correct / answered) * 100) : 0,
+      recentSets: recentSetsRes.rows || []
+    });
+  } catch (err) {
+    console.error('Dashboard error:', err);
+    res.status(500).json({ error: 'Failed to load dashboard' });
+  }
 });
 
+app.get('/api/quizzes', ensureAuthenticated, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const result = await db.execute({
+      sql: 'SELECT id, quiz_data, created_at FROM quizzes WHERE user_id = ? ORDER BY created_at DESC',
+      args: [userId]
+    });
+    res.json({ quizzes: result.rows || [] });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch quizzes' });
+  }
+});
+
+app.post('/api/save-score', ensureAuthenticated, async (req, res) => {
+  try {
+    const { answered, correct } = req.body;
+    await db.execute({
+      sql: 'INSERT INTO scores (user_id, questions_answered, correct_answers) VALUES (?, ?, ?)',
+      args: [req.user.id, answered, correct]
+    });
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to save score' });
+  }
+});
+
+// Run locally if not on Vercel
 if (require.main === module) {
   app.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
+    console.log(`Notes → Quiz server running on port ${PORT}`);
   });
 }
 
