@@ -25,7 +25,7 @@
     .nav-icon{width:18px;text-align:center;font-size:16px}
     .sidebar-note{margin-top:auto;padding:16px;border:1px solid #d6dfd1;border-radius:10px;background:var(--sage);font-size:12px;line-height:1.55}
     .sidebar-note strong{display:block;font-size:13px;margin-bottom:5px}
-    main{padding:34px clamp(24px,5vw,72px) 60px;max-width:1120px;width:100%;display:flex;flex-direction:column}
+    main{padding:34px clamp(24px,5vw,72px) 60px;width:100%;display:flex;flex-direction:column}
     .topbar{display:flex;align-items:center;justify-content:space-between;margin-bottom:50px}
     .eyebrow{color:var(--coral);text-transform:uppercase;letter-spacing:.15em;font-size:10px;font-weight:700}
     .date{color:var(--muted);font-size:12px}
@@ -163,7 +163,7 @@
       <div class="sidebar-note"><strong>Small steps, daily.</strong>Your best study sessions start with one good question.</div>
     </aside>
     
-    <main style="max-width: 100%; width: 100%; display: flex; flex-direction: column;">
+    <main style="width: 100%; display: flex; flex-direction: column;">
       <div class="topbar">
         <div style="display: flex; align-items: center; gap: 14px;">
           <button class="burger-btn" id="burgerToggle">☰ Menu</button>
@@ -422,7 +422,6 @@
         if(user){
           document.getElementById('appRoot').classList.add('logged-in');
           document.getElementById('profileContainer').style.display = 'inline-block';
-          document.querySelector('main').style.maxWidth = '1120px';
 
           document.getElementById('pageLanding').classList.remove('active-page');
           document.getElementById('pageOverview').classList.add('active-page');
@@ -489,7 +488,6 @@
         } else {
           document.getElementById('appRoot').classList.remove('logged-in');
           document.getElementById('profileContainer').style.display = 'none';
-          document.querySelector('main').style.maxWidth = '100%';
 
           document.getElementById('pageLanding').classList.add('active-page');
           document.getElementById('pageOverview').classList.remove('active-page');
