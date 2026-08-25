@@ -11,7 +11,7 @@
     :root{--ink:#20221f;--muted:#76796f;--paper:#f8f6f0;--cream:#ede9df;--line:#ddd9ce;--coral:#e66a4e;--sage:#cddacb;--yellow:#f2c963;--white:#fffdf8}
     *{box-sizing:border-box;margin:0}
     body{min-height:100vh;color:var(--ink);background:var(--paper);font-family:'DM Sans',sans-serif;background-image:radial-gradient(#d8d4c8 .7px,transparent .7px);background-size:18px 18px}
-    button,textarea,select{font:inherit}
+    button,textarea{font:inherit}
     button{cursor:pointer}
     .app{display:grid;grid-template-columns:1fr;min-height:100vh;max-width:1440px;margin:auto;background:rgba(248,246,240,.9);position:relative}
     .app.logged-in{grid-template-columns:240px minmax(0,1fr)}
@@ -56,9 +56,7 @@
     .file-chip{display:flex;align-items:center;justify-content:space-between;padding:11px 13px;margin-top:10px;background:var(--cream);border-radius:7px;font-size:12px}
     .remove{border:0;background:transparent;color:var(--muted);font-size:17px}
     .compose-footer{display:flex;align-items:end;justify-content:space-between;gap:16px;margin-top:17px}
-    .settings{display:flex;gap:9px;flex-wrap:wrap}
-    .setting{display:grid;gap:5px;color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.08em}
-    select{border:1px solid var(--line);border-radius:6px;padding:8px 25px 8px 9px;color:var(--ink);background:var(--paper);font-size:12px;text-transform:none;letter-spacing:0;outline:0}
+    .settings{display:flex;gap:9px;flex-wrap:wrap;align-items:center}
     .primary{border:0;background:var(--coral);color:white;border-radius:7px;padding:11px 18px;font-weight:700;font-size:12px;box-shadow:0 4px 0 #bf513c;transition:transform .15s,box-shadow .15s;white-space:nowrap;text-decoration:none;display:inline-block}
     .primary:hover{transform:translateY(-2px);box-shadow:0 6px 0 #bf513c}
     .primary:active{transform:translateY(2px);box-shadow:0 2px 0 #bf513c}
@@ -140,8 +138,7 @@
       .library-list{display:block}
       .library-item:nth-child(2){border-bottom:1px solid #ebe7dd}
       h1{font-size:42px}
-      .settings{display:grid;grid-template-columns:1fr 1fr}
-      .setting select{width:100%}
+      .settings{display:grid;grid-template-columns:1fr}
     }
     .nav-item{min-height:40px}
     .nav-icon{width:48px;min-width:48px;flex:none;white-space:nowrap;font-size:11px;color:var(--coral)}
@@ -236,7 +233,7 @@
         </section>
       </div>
 
-      <!-- PAGE 2: GENERATE QUIZ (FULL WIDTH) -->
+      <!-- PAGE 2: GENERATE QUIZ (FULL WIDTH, FIXED 10 QUESTIONS) -->
       <div id="pageGenerate" class="page-view">
         <section class="welcome" style="margin-bottom: 24px;">
           <div>
@@ -269,8 +266,7 @@
                 </div>
                 <div class="compose-footer">
                   <div class="settings">
-                    <label class="setting">Difficulty<select id="difficulty"><option>Thoughtful</option><option>Challenging</option><option>Quick review</option></select></label>
-                    <label class="setting">Questions<select id="questionCount"><option>10 questions</option><option>5 questions</option><option>15 questions</option></select></label>
+                    <span class="setting" style="text-transform: none; font-size: 11px; font-weight: 600; color: var(--muted); display: flex; align-items: center;">⚡ Standard Mode: 10 Challenging Questions</span>
                   </div>
                   <div>
                     <div id="status"><span class="dots"><i></i><i></i><i></i></span> Building your quiz</div>
@@ -301,7 +297,7 @@
         </section>
       </div>
 
-      <!-- PAGE 3: MY LIBRARY (FULL WIDTH) -->
+      <!-- PAGE 3: MY LIBRARY -->
       <div id="pageLibrary" class="page-view">
         <section class="welcome" style="margin-bottom: 24px;">
           <div>
@@ -341,7 +337,45 @@
     
     generateBtn.onclick=generateQuiz;async function generateQuiz(){errorContainer.style.display='none';let fetchPromise;if(mode==='text'){const notes=notesInput.value.trim();if(notes.length<30){showError('Add at least 30 characters of notes to build a quiz.');return}fetchPromise=fetch('/api/generate-quiz',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({notes})})}else{if(!selectedFile){showError('Select or drop a file first.');return}const formData=new FormData();formData.append('file',selectedFile);fetchPromise=fetch('/api/generate-quiz-file',{method:'POST',body:formData})}generateBtn.disabled=true;statusEl.style.display='flex';try{const response=await fetchPromise;const data=await response.json();if(!response.ok)throw new Error(data.error||'Something went wrong.');quiz=data.quiz;current=0;score=0;answered=0;generatorPanel.style.display='none';quizCard.style.display='block';renderQuestion();quizCard.scrollIntoView({behavior:'smooth',block:'start'})}catch(error){showError(error.message||'Failed to generate quiz. Please try again.')}finally{generateBtn.disabled=false;statusEl.style.display='none';loadDashboard()}}
     
-    function renderQuestion(){const question=quiz[current];qnum.textContent=`Question ${String(current+1).padStart(2,'0')} / ${String(quiz.length).padStart(2,'0')}`;qtext.textContent=question.question;explainContainer.style.display='none';nextBtn.style.display='none';optionsWrap.innerHTML='';['A','B','C','D'].forEach((letter,index)=>{if(!question.options[index])return;const option=document.createElement('div');option.className='option-card';option.innerHTML=`<span class="letter">${letter}</span><span>${question.options[index]}</span>`;option.onclick=()=>selectAnswer(index);optionsWrap.appendChild(option)});updateScore()}function selectAnswer(index){const question=quiz[current],options=optionsWrap.querySelectorAll('.option-card');options.forEach(option=>option.classList.add('disabled'));if(index===question.correctIndex){options[index].classList.add('correct');score++}else{options[index].classList.add('wrong');options[question.correctIndex].classList.add('correct')}answered++;explainText.textContent=question.explanation||'No explanation provided.';explainContainer.style.display='block';nextBtn.style.display='inline-block';nextBtn.textContent=current===quiz.length-1?'Finish quiz ->':'Next question ->';updateScore()}function updateScore(){scoreLabel.textContent=`Score: ${score}/${answered}`}
+    function renderQuestion(){
+      const question=quiz[current];
+      qnum.textContent=`Question ${String(current+1).padStart(2,'0')} / ${String(quiz.length).padStart(2,'0')}`;
+      qtext.textContent=question.question;
+      explainContainer.style.display='none';
+      nextBtn.style.display='none';
+      optionsWrap.innerHTML='';
+
+      ['A','B','C','D'].forEach((letter,index)=>{
+        if(!question.options[index])return;
+        const option=document.createElement('div');
+        option.className='option-card';
+        option.innerHTML=`<span class="letter">${letter}</span><span>${question.options[index]}</span>`;
+        option.onclick=()=>selectAnswer(index);
+        optionsWrap.appendChild(option)
+      });
+      updateScore()
+    }
+
+    function selectAnswer(index){
+      const question=quiz[current],options=optionsWrap.querySelectorAll('.option-card');
+      options.forEach(option=>option.classList.add('disabled'));
+      
+      if(index===question.correctIndex){
+        options[index].classList.add('correct');
+        score++;
+      }else{
+        options[index].classList.add('wrong');
+        options[question.correctIndex].classList.add('correct');
+      }
+      answered++;
+      explainText.textContent=question.explanation||'No explanation provided.';
+      explainContainer.style.display='block';
+      nextBtn.style.display='inline-block';
+      nextBtn.textContent=current===quiz.length-1?'Finish quiz ->':'Next question ->';
+      updateScore()
+    }
+
+    function updateScore(){scoreLabel.textContent=`Score: ${score}/${answered}`}
     
     nextBtn.onclick=showNext;function showNext(){if(current===quiz.length-1){quizCard.style.display='none';doneCard.style.display='block';const percent=Math.round(score/quiz.length*100);document.getElementById('doneText').textContent=`You scored ${score} out of ${quiz.length} - ${percent}%`;doneCard.scrollIntoView({behavior:'smooth',block:'start'});fetch('/api/save-score',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({answered:quiz.length,correct:score})}).then(()=>loadDashboard());}else{current++;renderQuestion()}}
     
