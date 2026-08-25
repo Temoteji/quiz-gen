@@ -337,7 +337,7 @@
     
     generateBtn.onclick=generateQuiz;async function generateQuiz(){errorContainer.style.display='none';let fetchPromise;if(mode==='text'){const notes=notesInput.value.trim();if(notes.length<30){showError('Add at least 30 characters of notes to build a quiz.');return}fetchPromise=fetch('/api/generate-quiz',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({notes})})}else{if(!selectedFile){showError('Select or drop a file first.');return}const formData=new FormData();formData.append('file',selectedFile);fetchPromise=fetch('/api/generate-quiz-file',{method:'POST',body:formData})}generateBtn.disabled=true;statusEl.style.display='flex';try{const response=await fetchPromise;const data=await response.json();if(!response.ok)throw new Error(data.error||'Something went wrong.');quiz=data.quiz;current=0;score=0;answered=0;
       
-      // Cleanly isolate view context to only display the active quiz container
+      // Ensure only the Generate page view remains active and visible
       document.querySelectorAll('.page-view').forEach(p => p.classList.remove('active-page'));
       document.getElementById('pageGenerate').classList.add('active-page');
 
@@ -422,6 +422,12 @@
         navItems.forEach(navItem=>navItem.classList.remove('active'));
         item.classList.add('active');
         const targetId = item.getAttribute('data-target');
+        
+        // Reset generator states when navigating away manually
+        quizCard.style.display='none';
+        doneCard.style.display='none';
+        generatorPanel.style.display='block';
+
         pageViews.forEach(page=>{
           if(page.id === targetId){page.classList.add('active-page')}else{page.classList.remove('active-page')}
         });
