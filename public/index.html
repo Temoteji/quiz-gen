@@ -335,7 +335,13 @@
     function switchMode(nextMode){mode=nextMode;tabText.classList.toggle('active',mode==='text');tabFile.classList.toggle('active',mode==='file');panelText.style.display=mode==='text'?'block':'none';panelFile.style.display=mode==='file'?'block':'none';errorContainer.style.display='none'}tabText.onclick=()=>switchMode('text');tabFile.onclick=()=>switchMode('file');dropZone.onclick=()=>fileInput.click();dropZone.ondragover=e=>{e.preventDefault();dropZone.classList.add('drag-over')};dropZone.ondragleave=()=>dropZone.classList.remove('drag-over');dropZone.ondrop=e=>{e.preventDefault();dropZone.classList.remove('drag-over');if(e.dataTransfer.files[0])handleFileSelect(e.dataTransfer.files[0])};fileInput.onchange=e=>{if(e.target.files[0])handleFileSelect(e.target.files[0])};
     function handleFileSelect(file){const allowed=['image/jpeg','image/png','image/webp','image/gif','application/pdf'];if(!allowed.includes(file.type)){showError('Unsupported file format. Please use PDF, PNG, JPG, WEBP, or GIF.');return}if(file.size>10485760){showError('File exceeds the 10MB limit.');return}selectedFile=file;errorContainer.style.display='none';fileName.textContent=file.name;fileChip.style.display='flex';dropZone.style.display='none';if(file.type.startsWith('image/')){const reader=new FileReader();reader.onload=e=>{filePreview.src=e.target.result;filePreview.style.display='block'};reader.readAsDataURL(file)}}function clearFile(){selectedFile=null;fileInput.value='';fileChip.style.display='none';filePreview.style.display='none';filePreview.src='';dropZone.style.display='grid'}removeFileBtn.onclick=clearFile;function showError(message){errorText.textContent=message;errorContainer.style.display='block'}
     
-    generateBtn.onclick=generateQuiz;async function generateQuiz(){errorContainer.style.display='none';let fetchPromise;if(mode==='text'){const notes=notesInput.value.trim();if(notes.length<30){showError('Add at least 30 characters of notes to build a quiz.');return}fetchPromise=fetch('/api/generate-quiz',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({notes})})}else{if(!selectedFile){showError('Select or drop a file first.');return}const formData=new FormData();formData.append('file',selectedFile);fetchPromise=fetch('/api/generate-quiz-file',{method:'POST',body:formData})}generateBtn.disabled=true;statusEl.style.display='flex';try{const response=await fetchPromise;const data=await response.json();if(!response.ok)throw new Error(data.error||'Something went wrong.');quiz=data.quiz;current=0;score=0;answered=0;generatorPanel.style.display='none';quizCard.style.display='block';renderQuestion();quizCard.scrollIntoView({behavior:'smooth',block:'start'})}catch(error){showError(error.message||'Failed to generate quiz. Please try again.')}finally{generateBtn.disabled=false;statusEl.style.display='none';loadDashboard()}}
+    generateBtn.onclick=generateQuiz;async function generateQuiz(){errorContainer.style.display='none';let fetchPromise;if(mode==='text'){const notes=notesInput.value.trim();if(notes.length<30){showError('Add at least 30 characters of notes to build a quiz.');return}fetchPromise=fetch('/api/generate-quiz',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({notes})})}else{if(!selectedFile){showError('Select or drop a file first.');return}const formData=new FormData();formData.append('file',selectedFile);fetchPromise=fetch('/api/generate-quiz-file',{method:'POST',body:formData})}generateBtn.disabled=true;statusEl.style.display='flex';try{const response=await fetchPromise;const data=await response.json();if(!response.ok)throw new Error(data.error||'Something went wrong.');quiz=data.quiz;current=0;score=0;answered=0;
+      
+      // Cleanly isolate view context to only display the active quiz container
+      document.querySelectorAll('.page-view').forEach(p => p.classList.remove('active-page'));
+      document.getElementById('pageGenerate').classList.add('active-page');
+
+      generatorPanel.style.display='none';quizCard.style.display='block';renderQuestion();quizCard.scrollIntoView({behavior:'smooth',block:'start'})}catch(error){showError(error.message||'Failed to generate quiz. Please try again.')}finally{generateBtn.disabled=false;statusEl.style.display='none';loadDashboard()}}
     
     function renderQuestion(){
       const question=quiz[current];
@@ -379,7 +385,20 @@
     
     nextBtn.onclick=showNext;function showNext(){if(current===quiz.length-1){quizCard.style.display='none';doneCard.style.display='block';const percent=Math.round(score/quiz.length*100);document.getElementById('doneText').textContent=`You scored ${score} out of ${quiz.length} - ${percent}%`;doneCard.scrollIntoView({behavior:'smooth',block:'start'});fetch('/api/save-score',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({answered:quiz.length,correct:score})}).then(()=>loadDashboard());}else{current++;renderQuestion()}}
     
-    restartBtn.onclick=resetAll;function resetAll(){notesInput.value='';clearFile();doneCard.style.display='none';quizCard.style.display='none';generatorPanel.style.display='block';quiz=[];current=0;score=0;answered=0;errorContainer.style.display='none'}notesInput.onkeydown=e=>{if((e.metaKey||e.ctrlKey)&&e.key==='Enter'){e.preventDefault();generateBtn.click()}};
+    restartBtn.onclick=resetAll;
+    function resetAll(){
+      notesInput.value='';
+      clearFile();
+      doneCard.style.display='none';
+      quizCard.style.display='none';
+      generatorPanel.style.display='block';
+      quiz=[];
+      current=0;
+      score=0;
+      answered=0;
+      errorContainer.style.display='none';
+    }
+    notesInput.onkeydown=e=>{if((e.metaKey||e.ctrlKey)&&e.key==='Enter'){e.preventDefault();generateBtn.click()}};
     
     // MOBILE BURGER TOGGLE LOGIC
     const burgerToggle = document.getElementById('burgerToggle');
