@@ -145,9 +145,14 @@
     }
     .nav-item{min-height:40px}
     .nav-icon{width:48px;min-width:48px;flex:none;white-space:nowrap;font-size:11px;color:var(--coral)}
+
+    /* LOADING OVERLAY - covers the page until we know if the user is logged in,
+       so refresh never flashes the landing page before swapping to the dashboard */
+    #loadingOverlay{position:fixed;inset:0;background:var(--paper);z-index:9999;display:flex;align-items:center;justify-content:center}
   </style>
 </head>
 <body>
+  <div id="loadingOverlay"><span class="dots"><i></i><i></i><i></i></span></div>
   <div class="app" id="appRoot">
     <aside id="sidebarNav">
       <div class="brand"><span class="mark">Q</span><span>QuizForge</span></div>
@@ -495,6 +500,9 @@
           document.getElementById('pageLibrary').classList.remove('active-page');
         }
       }catch(e){}
+      finally{
+        document.getElementById('loadingOverlay').style.display='none';
+      }
     }
     loadDashboard();
   </script>
