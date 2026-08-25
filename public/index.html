@@ -23,6 +23,8 @@
     .nav-item{border:0;background:transparent;padding:11px 12px;border-radius:8px;color:var(--muted);display:flex;align-items:center;gap:11px;text-align:left;font-size:13px;width:100%}
     .nav-item.active,.nav-item:hover{color:var(--ink);background:var(--white);box-shadow:0 2px 0 rgba(32,34,31,.04)}
     .nav-icon{width:18px;text-align:center;font-size:16px}
+    .sidebar-note{margin-top:auto;padding:16px;border:1px solid #d6dfd1;border-radius:10px;background:var(--sage);font-size:12px;line-height:1.55}
+    .sidebar-note strong{display:block;font-size:13px;margin-bottom:5px}
     main{padding:34px clamp(24px,5vw,72px) 60px;max-width:1120px;width:100%;display:flex;flex-direction:column}
     .topbar{display:flex;align-items:center;justify-content:space-between;margin-bottom:50px}
     .eyebrow{color:var(--coral);text-transform:uppercase;letter-spacing:.15em;font-size:10px;font-weight:700}
@@ -90,7 +92,7 @@
     .done h2{font:400 40px 'Instrument Serif',serif;margin-bottom:8px}
     .done p{color:var(--muted);font-size:13px;margin-bottom:22px}
     
-    /* BURGER TOGGLE BUTTON - hidden on desktop, flex on mobile */
+    /* BURGER TOGGLE BUTTON - mobile only */
     .burger-btn { display: none; background: transparent; border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; font-size: 14px; align-items: center; gap: 6px; color: var(--ink); font-weight: 600; }
 
     /* PROFILE DROPDOWN CSS */
@@ -158,6 +160,7 @@
         <button class="nav-item" data-target="pageGenerate"><span class="nav-icon">*</span>Generate quiz</button>
         <button class="nav-item" data-target="pageLibrary"><span class="nav-icon">library</span>My library</button>
       </nav>
+      <div class="sidebar-note"><strong>Small steps, daily.</strong>Your best study sessions start with one good question.</div>
     </aside>
     
     <main style="max-width: 100%; width: 100%; display: flex; flex-direction: column;">
@@ -458,7 +461,7 @@
                 try{
                   const quizData=JSON.parse(set.quiz_data);
                   const title=quizData[0]?quizData[0].question.substring(0,35)+'...':'Study Set';
-                  overviewHtml += `<div class="library-item"><div class="folder">note</div><div><strong>${title}</strong><span>${quizData.length} questions - Saved</span></div></div>`;
+                  overviewHtml += `<div class="library-item"><div class="folder">📚</div><div><strong>${title}</strong><span>${quizData.length} questions - Saved</span></div></div>`;
                 }catch(e){}
               });
               overviewList.innerHTML = overviewHtml;
