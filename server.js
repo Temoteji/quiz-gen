@@ -91,17 +91,11 @@ const openai = new OpenAI({
 
 app.use(express.json({ limit: '100kb' }));
 
-// Reused as the JWT signing secret below. Make sure this is set in your
-// Vercel project's environment variables, not just your local .env.
 const JWT_SECRET = process.env.SESSION_SECRET || 'fallback_secret_key';
 
 app.use(cookieParser());
 app.use(passport.initialize());
 
-// Stateless auth: instead of express-session (which defaults to an
-// in-memory store that gets wiped every time Vercel spins up a fresh
-// serverless instance), we verify a signed JWT from the cookie on every
-// request. No server-side session storage needed at all.
 app.use((req, res, next) => {
   const token = req.cookies.token;
   if (token) {
@@ -121,7 +115,7 @@ passport.use(new GoogleStrategy({
       ? "https://quiz-gen-topaz.vercel.app/auth/google/callback" 
       : "http://localhost:3000/auth/google/callback",
     proxy: true,
-    state: false // no server-side session available to store CSRF state in
+    state: false 
   },
   async function(accessToken, refreshToken, profile, cb) {
     try {
@@ -211,6 +205,32 @@ The output must exactly match this structure:
   }
 ]`;
 
+// Helper function to shuffle options and recalculate correctIndex securely on the server
+function shuffleQuizOptions(quizArray) {
+  return quizArray.map(item => {
+    // Map options to keep track of their original correct relationship
+    let optionsWithIndices = item.options.map((opt, idx) => ({ 
+      text: opt, 
+      isCorrect: idx === item.correctIndex 
+    }));
+
+    // Fisher-Yates shuffle algorithm
+    for (let i = optionsWithIndices.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [optionsWithIndices[i], optionsWithIndices[j]] = [optionsWithIndices[j], optionsWithIndices[i]];
+    }
+
+    // Find the new correctIndex after shuffling
+    const newCorrectIndex = optionsWithIndices.findIndex(opt => opt.isCorrect);
+
+    return {
+      ...item,
+      options: optionsWithIndices.map(opt => opt.text),
+      correctIndex: newCorrectIndex !== -1 ? newCorrectIndex : 0
+    };
+  });
+}
+
 async function callOpenRouterForQuiz(userPrompt) {
   try {
     const completion = await openai.chat.completions.create({
@@ -234,7 +254,9 @@ async function callOpenRouterForQuiz(userPrompt) {
     if (!Array.isArray(quiz) || quiz.length === 0) {
       throw new Error('The AI did not return any questions. Try again.');
     }
-    return quiz;
+
+    // Randomize option order and recalculate correctIndex for every question
+    return shuffleQuizOptions(quiz);
   } catch (error) {
     console.error('OpenRouter API error:', error);
     throw new Error('The AI service failed to respond. Try again shortly.');
