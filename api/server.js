@@ -4,6 +4,7 @@ const cookieParser = require('cookie-parser');
 const jwt = require('jsonwebtoken');
 const multer = require('multer');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
+const { createClient } = require('@libsql/client');
 
 const app = express();
 
@@ -13,6 +14,49 @@ const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
 const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET;
 const BASE_URL = process.env.BASE_URL || 'https://quiz-gen-topaz.vercel.app';
+
+// Database Client (Turso / libSQL). Falls back to a local file for dev if
+// no remote credentials are set, but on Vercel you MUST set TURSO_DATABASE_URL
+// and TURSO_AUTH_TOKEN, since the deployed filesystem is read-only/ephemeral.
+const db = createClient({
+  url: process.env.TURSO_DATABASE_URL || 'file:local.db',
+  authToken: process.env.TURSO_AUTH_TOKEN
+});
+
+let dbReady = db.execute(`
+  CREATE TABLE IF NOT EXISTS users (
+    id TEXT PRIMARY KEY,
+    name TEXT,
+    email TEXT,
+    picture TEXT
+  )
+`).then(() => db.execute(`
+  CREATE TABLE IF NOT EXISTS quizzes (
+    id TEXT PRIMARY KEY,
+    user_id TEXT,
+    quiz_data TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(user_id) REFERENCES users(id)
+  )
+`)).then(() => db.execute(`
+  CREATE TABLE IF NOT EXISTS scores (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id TEXT,
+    questions_answered INTEGER,
+    correct_answers INTEGER,
+    FOREIGN KEY(user_id) REFERENCES users(id)
+  )
+`)).catch(err => console.error('DB init error:', err));
+
+// Ensure tables exist before handling any request
+app.use(async (req, res, next) => {
+  try {
+    await dbReady;
+    next();
+  } catch (err) {
+    next(err);
+  }
+});
 
 // Middleware
 app.use(express.json({ limit: '10mb' }));
@@ -25,13 +69,6 @@ const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 10 * 1024 * 1024 } // 10MB limit
 });
-
-// Mock / In-Memory User & Quiz Database (Replace with Supabase / Postgres as needed)
-const db = {
-  users: new Map(),
-  quizzes: new Map(), // userId -> array of quizzes
-  userStats: new Map() // userId -> { total_answered, correct_answered }
-};
 
 // Initialize Gemini AI client
 const genAI = GEMINI_API_KEY ? new GoogleGenerativeAI(GEMINI_API_KEY) : null;
@@ -168,7 +205,11 @@ app.get('/auth/google/callback', async (req, res) => {
       picture: profile.picture
     };
 
-    db.users.set(profile.id, userData);
+    await db.execute({
+      sql: `INSERT INTO users (id, name, email, picture) VALUES (?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET name = excluded.name, email = excluded.email, picture = excluded.picture`,
+      args: [userData.id, userData.name, userData.email, userData.picture]
+    });
 
     // Generate JWT Token
     const token = jwt.sign(userData, JWT_SECRET, { expiresIn: '24h' });
@@ -196,19 +237,33 @@ app.get('/logout', (req, res) => {
 });
 
 // Get Current Authenticated User Profile
-app.get('/api/me', authenticateToken, (req, res) => {
-  const userId = req.user.id;
-  const stats = db.userStats.get(userId) || { total_answered: 0, correct_answered: 0 };
-  const avgScore = stats.total_answered > 0 ? (stats.correct_answered / stats.total_answered) * 100 : 0;
+app.get('/api/me', authenticateToken, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const result = await db.execute({
+      sql: `SELECT COALESCE(SUM(questions_answered), 0) AS total_answered,
+                   COALESCE(SUM(correct_answers), 0) AS correct_answered
+            FROM scores WHERE user_id = ?`,
+      args: [userId]
+    });
 
-  res.json({
-    id: req.user.id,
-    name: req.user.name,
-    email: req.user.email,
-    picture: req.user.picture,
-    total_answered: stats.total_answered,
-    avg_score: avgScore
-  });
+    const row = result.rows[0] || { total_answered: 0, correct_answered: 0 };
+    const totalAnswered = Number(row.total_answered) || 0;
+    const correctAnswered = Number(row.correct_answered) || 0;
+    const avgScore = totalAnswered > 0 ? (correctAnswered / totalAnswered) * 100 : 0;
+
+    res.json({
+      id: req.user.id,
+      name: req.user.name,
+      email: req.user.email,
+      picture: req.user.picture,
+      total_answered: totalAnswered,
+      avg_score: avgScore
+    });
+  } catch (err) {
+    console.error('Fetch /api/me Error:', err);
+    res.status(500).json({ error: 'Failed to load profile.' });
+  }
 });
 
 // ==========================================
@@ -216,12 +271,33 @@ app.get('/api/me', authenticateToken, (req, res) => {
 // ==========================================
 
 // Get All Quizzes for Logged-In User
-app.get('/api/quizzes', authenticateToken, (req, res) => {
-  const userQuizzes = db.quizzes.get(req.user.id) || [];
-  const stats = db.userStats.get(req.user.id) || { total_answered: 0, correct_answered: 0 };
-  const avgScore = stats.total_answered > 0 ? (stats.correct_answered / stats.total_answered) * 100 : 0;
+app.get('/api/quizzes', authenticateToken, async (req, res) => {
+  try {
+    const userId = req.user.id;
 
-  res.json({ quizzes: userQuizzes, avg_score: avgScore });
+    const quizzesResult = await db.execute({
+      sql: `SELECT id, user_id, quiz_data, created_at FROM quizzes
+            WHERE user_id = ? ORDER BY created_at DESC`,
+      args: [userId]
+    });
+
+    const statsResult = await db.execute({
+      sql: `SELECT COALESCE(SUM(questions_answered), 0) AS total_answered,
+                   COALESCE(SUM(correct_answers), 0) AS correct_answered
+            FROM scores WHERE user_id = ?`,
+      args: [userId]
+    });
+
+    const statsRow = statsResult.rows[0] || { total_answered: 0, correct_answered: 0 };
+    const totalAnswered = Number(statsRow.total_answered) || 0;
+    const correctAnswered = Number(statsRow.correct_answered) || 0;
+    const avgScore = totalAnswered > 0 ? (correctAnswered / totalAnswered) * 100 : 0;
+
+    res.json({ quizzes: quizzesResult.rows, avg_score: avgScore });
+  } catch (err) {
+    console.error('Fetch /api/quizzes Error:', err);
+    res.status(500).json({ error: 'Failed to load quizzes.' });
+  }
 });
 
 // Generate Quiz from Text Notes
@@ -235,16 +311,10 @@ app.post('/api/generate-quiz', authenticateToken, async (req, res) => {
     const prompt = `Generate a 10-question quiz based on these study notes:\n\n${notes}`;
     const quizData = await generateQuizWithRetry(prompt);
 
-    const newQuiz = {
-      id: Date.now().toString(),
-      user_id: req.user.id,
-      quiz_data: JSON.stringify(quizData),
-      created_at: new Date().toISOString()
-    };
-
-    const existingQuizzes = db.quizzes.get(req.user.id) || [];
-    existingQuizzes.unshift(newQuiz);
-    db.quizzes.set(req.user.id, existingQuizzes);
+    await db.execute({
+      sql: `INSERT INTO quizzes (id, user_id, quiz_data) VALUES (?, ?, ?)`,
+      args: [Date.now().toString(), req.user.id, JSON.stringify(quizData)]
+    });
 
     res.json({ quiz: quizData });
   } catch (err) {
@@ -263,16 +333,10 @@ app.post('/api/generate-quiz-file', authenticateToken, upload.single('file'), as
     const prompt = 'Extract the key educational topics from this uploaded document and generate a 10-question quiz.';
     const quizData = await generateQuizWithRetry(prompt, req.file.buffer, req.file.mimetype);
 
-    const newQuiz = {
-      id: Date.now().toString(),
-      user_id: req.user.id,
-      quiz_data: JSON.stringify(quizData),
-      created_at: new Date().toISOString()
-    };
-
-    const existingQuizzes = db.quizzes.get(req.user.id) || [];
-    existingQuizzes.unshift(newQuiz);
-    db.quizzes.set(req.user.id, existingQuizzes);
+    await db.execute({
+      sql: `INSERT INTO quizzes (id, user_id, quiz_data) VALUES (?, ?, ?)`,
+      args: [Date.now().toString(), req.user.id, JSON.stringify(quizData)]
+    });
 
     res.json({ quiz: quizData });
   } catch (err) {
@@ -282,17 +346,35 @@ app.post('/api/generate-quiz-file', authenticateToken, upload.single('file'), as
 });
 
 // Save Completed Quiz Score
-app.post('/api/save-score', authenticateToken, (req, res) => {
-  const { answered, correct } = req.body;
-  const userId = req.user.id;
+app.post('/api/save-score', authenticateToken, async (req, res) => {
+  try {
+    const { answered, correct } = req.body;
+    const userId = req.user.id;
 
-  const currentStats = db.userStats.get(userId) || { total_answered: 0, correct_answered: 0 };
-  currentStats.total_answered += (Number(answered) || 0);
-  currentStats.correct_answered += (Number(correct) || 0);
+    await db.execute({
+      sql: `INSERT INTO scores (user_id, questions_answered, correct_answers) VALUES (?, ?, ?)`,
+      args: [userId, Number(answered) || 0, Number(correct) || 0]
+    });
 
-  db.userStats.set(userId, currentStats);
+    const statsResult = await db.execute({
+      sql: `SELECT COALESCE(SUM(questions_answered), 0) AS total_answered,
+                   COALESCE(SUM(correct_answers), 0) AS correct_answered
+            FROM scores WHERE user_id = ?`,
+      args: [userId]
+    });
 
-  res.json({ success: true, stats: currentStats });
+    const row = statsResult.rows[0] || { total_answered: 0, correct_answered: 0 };
+    res.json({
+      success: true,
+      stats: {
+        total_answered: Number(row.total_answered) || 0,
+        correct_answered: Number(row.correct_answered) || 0
+      }
+    });
+  } catch (err) {
+    console.error('Save Score Error:', err);
+    res.status(500).json({ error: 'Failed to save score.' });
+  }
 });
 
 // Global Error Handler
