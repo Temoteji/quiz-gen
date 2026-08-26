@@ -98,12 +98,12 @@ function authenticateToken(req, res, next) {
   });
 }
 
-// AI Call Helper (Using latest model string)
+// AI Call Helper
 async function generateQuizWithRetry(prompt, fileBuffer = null, mimeType = null, retries = 3) {
   if (!genAI) throw new Error('GEMINI_API_KEY is not configured on the server.');
 
   const model = genAI.getGenerativeModel({ 
-    model: 'gemini-1.5-flash-latest',
+    model: 'gemini-2.5-flash',
     generationConfig: { responseMimeType: 'application/json' },
     systemInstruction: `
       You are an expert academic quiz generator.
@@ -314,7 +314,6 @@ app.post('/api/generate-quiz', authenticateToken, async (req, res) => {
     res.json({ quiz: quizData });
   } catch (err) {
     console.error('Quiz Generation Error:', err);
-    // Exposing the raw error to the frontend
     res.status(500).json({ error: `AI Error: ${err.message}` });
   }
 });
@@ -335,7 +334,6 @@ app.post('/api/generate-quiz-file', authenticateToken, upload.single('file'), as
     res.json({ quiz: quizData });
   } catch (err) {
     console.error('File Quiz Generation Error:', err);
-    // Exposing the raw error to the frontend
     res.status(500).json({ error: `AI Error: ${err.message}` });
   }
 });
