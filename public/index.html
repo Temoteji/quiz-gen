@@ -340,6 +340,10 @@
       document.querySelectorAll('.page-view').forEach(p => p.classList.remove('active-page'));
       document.getElementById('pageGenerate').classList.add('active-page');
 
+      navItems.forEach(navItem => {
+        navItem.classList.toggle('active', navItem.getAttribute('data-target') === 'pageGenerate');
+      });
+
       generatorPanel.style.display='none';quizCard.style.display='block';renderQuestion();quizCard.scrollIntoView({behavior:'smooth',block:'start'})}catch(error){showError(error.message||'Failed to generate quiz. Please try again.')}finally{generateBtn.disabled=false;statusEl.style.display='none';loadDashboard()}}
     
     function renderQuestion(){
@@ -499,14 +503,17 @@
           document.getElementById('appRoot').classList.add('logged-in');
           document.getElementById('profileContainer').style.display = 'block';
 
-          // Hide landing page and switch to Overview page
-          document.querySelectorAll('.page-view').forEach(p => p.classList.remove('active-page'));
-          document.getElementById('pageOverview').classList.add('active-page');
+          // Hide landing page and switch to Overview page ONLY if currently on landing page
+          const currentActive = document.querySelector('.page-view.active-page');
+          if (!currentActive || currentActive.id === 'pageLanding') {
+            document.querySelectorAll('.page-view').forEach(p => p.classList.remove('active-page'));
+            document.getElementById('pageOverview').classList.add('active-page');
 
-          // Highlight Overview in sidebar navigation
-          navItems.forEach(item => {
-            item.classList.toggle('active', item.getAttribute('data-target') === 'pageOverview');
-          });
+            // Highlight Overview in sidebar navigation
+            navItems.forEach(item => {
+              item.classList.toggle('active', item.getAttribute('data-target') === 'pageOverview');
+            });
+          }
 
           if (userData.name) document.getElementById('dropName').textContent = userData.name;
           if (userData.email) document.getElementById('dropEmail').textContent = userData.email;
