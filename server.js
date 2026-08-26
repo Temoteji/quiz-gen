@@ -17,7 +17,7 @@ const parsePdf = async (buffer) => {
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 
 app.set('trust proxy', 1);
 
@@ -76,17 +76,13 @@ const upload = multer({
   }
 });
 
-if (!OPENROUTER_API_KEY) {
-  console.warn('WARNING: OPENROUTER_API_KEY is not set. The quiz endpoint will fail until it is set.');
+if (!GEMINI_API_KEY) {
+  console.warn('WARNING: GEMINI_API_KEY is not set. The quiz endpoint will fail until it is set.');
 }
 
 const openai = new OpenAI({
-  baseURL: "https://openrouter.ai/api/v1",
-  apiKey: OPENROUTER_API_KEY,
-  defaultHeaders: {
-    "HTTP-Referer": "https://quiz-gen-topaz.vercel.app",
-    "X-Title": "QuizForge",
-  }
+  baseURL: "https://generativelanguage.googleapis.com/v1beta/openai/",
+  apiKey: GEMINI_API_KEY,
 });
 
 app.use(express.json({ limit: '100kb' }));
@@ -208,19 +204,16 @@ The output must exactly match this structure:
 // Helper function to shuffle options and recalculate correctIndex securely on the server
 function shuffleQuizOptions(quizArray) {
   return quizArray.map(item => {
-    // Map options to keep track of their original correct relationship
     let optionsWithIndices = item.options.map((opt, idx) => ({ 
       text: opt, 
       isCorrect: idx === item.correctIndex 
     }));
 
-    // Fisher-Yates shuffle algorithm
     for (let i = optionsWithIndices.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1));
       [optionsWithIndices[i], optionsWithIndices[j]] = [optionsWithIndices[j], optionsWithIndices[i]];
     }
 
-    // Find the new correctIndex after shuffling
     const newCorrectIndex = optionsWithIndices.findIndex(opt => opt.isCorrect);
 
     return {
@@ -231,35 +224,41 @@ function shuffleQuizOptions(quizArray) {
   });
 }
 
-async function callOpenRouterForQuiz(userPrompt) {
-  try {
-    const completion = await openai.chat.completions.create({
-      model: "openrouter/free",
-      messages: [
-        { role: "system", content: SYSTEM_PROMPT },
-        { role: "user", content: userPrompt }
-      ],
-    });
-
-    const responseText = completion.choices[0].message.content;
-    let raw = responseText.replace(/```json|```/g, '').trim();
-
-    let quiz;
+async function callGeminiForQuiz(userPrompt, retries = 3) {
+  for (let attempt = 1; attempt <= retries; attempt++) {
     try {
-      quiz = JSON.parse(raw);
-    } catch (parseErr) {
-      console.error('Failed to parse model output as JSON:', raw);
-      throw new Error('The AI returned an unexpected format. Try again.');
-    }
-    if (!Array.isArray(quiz) || quiz.length === 0) {
-      throw new Error('The AI did not return any questions. Try again.');
-    }
+      const completion = await openai.chat.completions.create({
+        model: "gemini-1.5-flash",
+        messages: [
+          { role: "system", content: SYSTEM_PROMPT },
+          { role: "user", content: userPrompt }
+        ],
+      });
 
-    // Randomize option order and recalculate correctIndex for every question
-    return shuffleQuizOptions(quiz);
-  } catch (error) {
-    console.error('OpenRouter API error:', error);
-    throw new Error('The AI service failed to respond. Try again shortly.');
+      const responseText = completion.choices[0].message.content;
+      let raw = responseText.replace(/```json|```/g, '').trim();
+
+      let quiz;
+      try {
+        quiz = JSON.parse(raw);
+      } catch (parseErr) {
+        console.error('Failed to parse model output as JSON:', raw);
+        throw new Error('The AI returned an unexpected format. Try again.');
+      }
+      if (!Array.isArray(quiz) || quiz.length === 0) {
+        throw new Error('The AI did not return any questions. Try again.');
+      }
+
+      return shuffleQuizOptions(quiz);
+    } catch (error) {
+      if (error.status === 429 && attempt < retries) {
+        console.warn(`Rate limit hit. Retrying attempt ${attempt + 1} of ${retries}...`);
+        await new Promise(resolve => setTimeout(resolve, 2500));
+        continue;
+      }
+      console.error('Gemini API error:', error);
+      throw new Error('The AI service failed to respond. Try again shortly.');
+    }
   }
 }
 
@@ -268,9 +267,9 @@ app.post('/api/generate-quiz', quizLimiter, ensureAuthenticated, async (req, res
     const notes = (req.body && req.body.notes ? String(req.body.notes) : '').trim();
     if (notes.length < 30) return res.status(400).json({ error: 'Notes are too short to build a quiz from.' });
     if (notes.length > 12000) return res.status(400).json({ error: 'Notes are too long. Try a shorter excerpt.' });
-    if (!OPENROUTER_API_KEY) return res.status(500).json({ error: 'Server is missing its OpenRouter API key.' });
+    if (!GEMINI_API_KEY) return res.status(500).json({ error: 'Server is missing its Gemini API key.' });
 
-    const quiz = await callOpenRouterForQuiz(`Here are the notes:\n\n${notes}`);
+    const quiz = await callGeminiForQuiz(`Here are the notes:\n\n${notes}`);
     
     await db.execute({
       sql: 'INSERT INTO quizzes (user_id, quiz_data) VALUES (?, ?)',
@@ -296,7 +295,7 @@ app.post('/api/generate-quiz-file', quizLimiter, ensureAuthenticated, (req, res)
     }
     try {
       if (!req.file) return res.status(400).json({ error: 'No file was uploaded.' });
-      if (!OPENROUTER_API_KEY) return res.status(500).json({ error: 'Server is missing its OpenRouter API key.' });
+      if (!GEMINI_API_KEY) return res.status(500).json({ error: 'Server is missing its Gemini API key.' });
 
       let extractedText = "";
 
@@ -311,7 +310,7 @@ app.post('/api/generate-quiz-file', quizLimiter, ensureAuthenticated, (req, res)
         return res.status(400).json({ error: 'Could not extract enough readable text from the uploaded file. Try pasting the text directly.' });
       }
 
-      const quiz = await callOpenRouterForQuiz(`Here is the text extracted from the uploaded document:\n\n${extractedText.substring(0, 10000)}`);
+      const quiz = await callGeminiForQuiz(`Here is the text extracted from the uploaded document:\n\n${extractedText.substring(0, 10000)}`);
 
       await db.execute({
         sql: 'INSERT INTO quizzes (user_id, quiz_data) VALUES (?, ?)',
