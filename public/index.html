@@ -188,7 +188,7 @@
         </div>
       </div>
       
-      <!-- PAGE 0: LANDING / LOGIN PAGE (CENTERED HERO) -->
+      <!-- PAGE 0: LANDING / LOGIN PAGE (DEFAULT UNAUTHENTICATED) -->
       <div id="pageLanding" class="page-view active-page" style="width: 100%; max-width: 900px; margin: 0 auto; text-align: center;">
         <section class="welcome" style="display: flex; flex-direction: column; align-items: center; gap: 20px; padding: 40px 0; width: 100%;">
           <div>
@@ -208,7 +208,7 @@
         </section>
       </div>
 
-      <!-- PAGE 1: OVERVIEW (FULL WIDTH) -->
+      <!-- PAGE 1: OVERVIEW -->
       <div id="pageOverview" class="page-view">
         <section class="welcome">
           <div>
@@ -233,7 +233,7 @@
         </section>
       </div>
 
-      <!-- PAGE 2: GENERATE QUIZ (FULL WIDTH, FIXED 10 QUESTIONS) -->
+      <!-- PAGE 2: GENERATE QUIZ -->
       <div id="pageGenerate" class="page-view">
         <section class="welcome" style="margin-bottom: 24px;">
           <div>
@@ -337,7 +337,6 @@
     
     generateBtn.onclick=generateQuiz;async function generateQuiz(){errorContainer.style.display='none';let fetchPromise;if(mode==='text'){const notes=notesInput.value.trim();if(notes.length<30){showError('Add at least 30 characters of notes to build a quiz.');return}fetchPromise=fetch('/api/generate-quiz',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({notes})})}else{if(!selectedFile){showError('Select or drop a file first.');return}const formData=new FormData();formData.append('file',selectedFile);fetchPromise=fetch('/api/generate-quiz-file',{method:'POST',body:formData})}generateBtn.disabled=true;statusEl.style.display='flex';try{const response=await fetchPromise;const data=await response.json();if(!response.ok)throw new Error(data.error||'Something went wrong.');quiz=data.quiz;current=0;score=0;answered=0;
       
-      // Ensure only the Generate page view remains active and visible
       document.querySelectorAll('.page-view').forEach(p => p.classList.remove('active-page'));
       document.getElementById('pageGenerate').classList.add('active-page');
 
@@ -423,7 +422,6 @@
         item.classList.add('active');
         const targetId = item.getAttribute('data-target');
         
-        // Reset generator states when navigating away manually
         quizCard.style.display='none';
         doneCard.style.display='none';
         generatorPanel.style.display='block';
@@ -496,8 +494,19 @@
         const res = await fetch('/api/me');
         if (res.ok) {
           const userData = await res.json();
+
+          // Apply logged-in UI layout
           document.getElementById('appRoot').classList.add('logged-in');
           document.getElementById('profileContainer').style.display = 'block';
+
+          // Hide landing page and switch to Overview page
+          document.querySelectorAll('.page-view').forEach(p => p.classList.remove('active-page'));
+          document.getElementById('pageOverview').classList.add('active-page');
+
+          // Highlight Overview in sidebar navigation
+          navItems.forEach(item => {
+            item.classList.toggle('active', item.getAttribute('data-target') === 'pageOverview');
+          });
 
           if (userData.name) document.getElementById('dropName').textContent = userData.name;
           if (userData.email) document.getElementById('dropEmail').textContent = userData.email;
@@ -529,8 +538,12 @@
             renderLibraryLists(quizzes);
           }
         } else {
+          // Unauthenticated State
           document.getElementById('appRoot').classList.remove('logged-in');
           document.getElementById('profileContainer').style.display = 'none';
+
+          document.querySelectorAll('.page-view').forEach(p => p.classList.remove('active-page'));
+          document.getElementById('pageLanding').classList.add('active-page');
         }
       } catch (e) {
         console.error('Error loading dashboard:', e);
