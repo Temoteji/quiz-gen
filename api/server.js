@@ -103,7 +103,7 @@ async function generateQuizWithRetry(prompt, fileBuffer = null, mimeType = null,
   if (!genAI) throw new Error('GEMINI_API_KEY is not configured on the server.');
 
   const model = genAI.getGenerativeModel({ 
-    model: 'gemini-2.5-flash',
+    model: 'gemini-3.6-flash',
     generationConfig: { responseMimeType: 'application/json' },
     systemInstruction: `
       You are an expert academic quiz generator.
@@ -190,6 +190,7 @@ app.get('/auth/google/callback', async (req, res) => {
     
     const profile = await userRes.json();
     
+    // Safely grab the ID whether Google sends 'id' or 'sub'
     const userId = profile.id || profile.sub;
 
     if (!userId) throw new Error('Failed to retrieve user ID from Google.');
@@ -201,17 +202,21 @@ app.get('/auth/google/callback', async (req, res) => {
       picture: profile.picture || ''
     };
 
+    // Save to DB
     await db.execute({
       sql: `INSERT INTO users (id, name, email, picture) VALUES (?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET name = excluded.name, email = excluded.email, picture = excluded.picture`,
       args: [userData.id, userData.name, userData.email, userData.picture]
     });
 
+    // Generate JWT
     const token = jwt.sign(userData, JWT_SECRET, { expiresIn: '24h' });
 
+    // Clean slate
     res.clearCookie('token', { path: '/' });
     res.clearCookie('qf_session', { path: '/' });
 
+    // Set bulletproof cookie
     res.cookie('qf_session', token, {
       httpOnly: true,
       secure: true, 
