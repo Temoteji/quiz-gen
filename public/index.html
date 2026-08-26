@@ -453,112 +453,125 @@
         listContainer.innerHTML = '';
         if (data.quizzes && data.quizzes.length > 0) {
           data.quizzes.forEach((item, index) => {
-            const questions = JSON.parse(item.quiz_data);
+            const questions = typeof item.quiz_data === 'string' ? JSON.parse(item.quiz_data) : (item.quiz_data || []);
             const dateStr = new Date(item.created_at).toLocaleDateString();
-            let html = `<div style="border: 1px solid var(--line); border-radius: 8px; padding: 14px; background: var(--paper);"><div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;"><span style="font-weight: 600; color: var(--coral); font-size: 13px;">Set #${data.quizzes.length - index} (${dateStr})</span><span style="font-size: 11px; color: var(--muted);">${questions.length} Questions</span></div><div style="display: grid; gap: 8px; margin-top: 8px;">`;
-            questions.forEach((q, qIdx) => {
-              html += `<div style="font-size: 12px; background: var(--white); padding: 10px; border: 1px solid var(--line); border-radius: 6px;"><p style="font-weight: 500; color: var(--ink);">${qIdx + 1}. ${q.question}</p><p style="font-size: 11px; color: #345831; margin-top: 4px;"><strong>Answer:</strong> ${q.options[q.correctIndex]}</p><p style="font-size: 11px; color: var(--muted); margin-top: 2px;"><em>${q.explanation}</em></p></div>`;
-            });
-            html += `</div></div>`;
-            listContainer.innerHTML += html;
+            const html = `
+              <div style="border: 1px solid var(--line); border-radius: 8px; padding: 14px; background: var(--paper);">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                  <span style="font-weight: 600; color: var(--coral); font-size: 13px;">Set #${data.quizzes.length - index} (${dateStr})</span>
+                  <span style="font-size: 11px; color: var(--muted);">${questions.length} Questions</span>
+                </div>
+                <p style="font-size: 12px; color: var(--ink); line-height: 1.4;">${questions[0]?.question || 'Study Set'}</p>
+              </div>`;
+            listContainer.insertAdjacentHTML('beforeend', html);
           });
         } else {
-          listContainer.innerHTML = '<p style="color: var(--muted); text-align: center; padding: 20px; font-size: 13px;">No saved study sets found yet.</p>';
+          listContainer.innerHTML = '<p style="color: var(--muted); font-size: 12px; text-align: center; padding: 20px;">No saved study sets found.</p>';
         }
-        quizModal.style.display = 'flex';
-      } catch (err) {}
+      } catch (err) {
+        document.getElementById('modalQuizList').innerHTML = '<p style="color: var(--muted); font-size: 12px; text-align: center; padding: 20px;">Failed to load saved sets.</p>';
+      }
     }
 
-    if(viewAllBtn) viewAllBtn.onclick = openQuizModal;
-    closeModalBtn.onclick = () => { quizModal.style.display = 'none'; };
-    window.onclick = (e) => { if (e.target === quizModal) { quizModal.style.display = 'none'; } };
-    
-    async function loadDashboard(){
-      try{
-        const userRes=await fetch('/api/user');
-        const user=await userRes.json();
-        
-        if(user){
+    if (viewAllBtn) {
+      viewAllBtn.onclick = () => {
+        quizModal.style.display = 'flex';
+        openQuizModal();
+      };
+    }
+
+    if (closeModalBtn) {
+      closeModalBtn.onclick = () => {
+        quizModal.style.display = 'none';
+      };
+    }
+
+    window.onclick = (e) => {
+      if (e.target === quizModal) quizModal.style.display = 'none';
+    };
+
+    async function loadDashboard() {
+      const loadingOverlay = document.getElementById('loadingOverlay');
+      try {
+        const res = await fetch('/api/me');
+        if (res.ok) {
+          const userData = await res.json();
           document.getElementById('appRoot').classList.add('logged-in');
-          document.getElementById('profileContainer').style.display = 'inline-block';
+          document.getElementById('profileContainer').style.display = 'block';
 
-          document.getElementById('pageLanding').classList.remove('active-page');
-          document.getElementById('pageOverview').classList.add('active-page');
-          
-          const fullName = user.displayName || (user.name ? user.name.givenName : 'User');
-          const firstName = fullName.split(' ')[0];
-          const userEmail = (user.emails && user.emails.length > 0) ? user.emails[0].value : 'No email provided';
-          
-          const hour=new Date().getHours();
-          let timeOfDay='evening';
-          if(hour<12)timeOfDay='morning';
-          else if(hour<18)timeOfDay='afternoon';
-          
-          document.querySelector('.welcome-greeting').textContent=`Good ${timeOfDay}, ${firstName}`;
-          document.querySelector('.profile').textContent=firstName.charAt(0).toUpperCase();
-          document.getElementById('dropName').textContent = fullName;
-          document.getElementById('dropEmail').textContent = userEmail;
-          
-          const statsRes=await fetch('/api/dashboard');
-          if(statsRes.ok){
-            const stats=await statsRes.json();
-            
-            document.getElementById('statQuizzesMade').textContent = stats.quizzesMade;
-            document.getElementById('statQuestionsAnswered').textContent = stats.questionsAnswered;
-            document.getElementById('statAverageScore').textContent = `${stats.averageScore}%`;
-            
-            document.getElementById('dropQuizCount').textContent = stats.quizzesMade;
-            document.getElementById('dropAvgScore').textContent = `${stats.averageScore}%`;
-            
-            const overviewList = document.querySelector('.overview-library-list');
-            const fullLibraryList = document.querySelector('.full-library-list');
+          if (userData.name) document.getElementById('dropName').textContent = userData.name;
+          if (userData.email) document.getElementById('dropEmail').textContent = userData.email;
+          if (userData.name) {
+            document.getElementById('profileBtn').textContent = userData.name.charAt(0).toUpperCase();
+          }
 
-            if(stats.recentSets.length>0){
-              let overviewHtml = '';
-              stats.recentSets.forEach(set=>{
-                try{
-                  const quizData=JSON.parse(set.quiz_data);
-                  const title=quizData[0]?quizData[0].question.substring(0,35)+'...':'Study Set';
-                  overviewHtml += `<div class="library-item"><div class="folder">📚</div><div><strong>${title}</strong><span>${quizData.length} questions - Saved</span></div></div>`;
-                }catch(e){}
-              });
-              overviewList.innerHTML = overviewHtml;
-            }else{
-              overviewList.innerHTML='<p style="color:var(--muted);font-size:12px;padding:10px 20px;">No quizzes made yet.</p>';
-            }
+          const qRes = await fetch('/api/quizzes');
+          if (qRes.ok) {
+            const qData = await qRes.json();
+            const quizzes = qData.quizzes || [];
+            
+            document.getElementById('dropQuizCount').textContent = quizzes.length;
+            document.getElementById('statQuizzesMade').textContent = quizzes.length;
 
-            const allQuizzesRes = await fetch('/api/quizzes');
-            const allQuizzesData = await allQuizzesRes.json();
-            if(allQuizzesData.quizzes && allQuizzesData.quizzes.length > 0) {
-              let fullHtml = '';
-              allQuizzesData.quizzes.forEach((item, index)=>{
-                try{
-                  const quizData = JSON.parse(item.quiz_data);
-                  const dateStr = new Date(item.created_at).toLocaleDateString();
-                  const title = quizData[0]?quizData[0].question.substring(0,40)+'...':'Study Set';
-                  fullHtml += `<div class="library-item" style="cursor: pointer;" onclick="openQuizModal()"><div class="folder">📚</div><div><strong>Set #${allQuizzesData.quizzes.length - index}: ${title}</strong><span>Created on ${dateStr} • ${quizData.length} questions</span></div></div>`;
-                }catch(e){}
-              });
-              fullLibraryList.innerHTML = fullHtml;
-            } else {
-              fullLibraryList.innerHTML='<p style="color:var(--muted);font-size:12px;padding:10px 20px;">Your library is empty. Generate your first quiz!</p>';
-            }
+            let totalQuestions = 0;
+            quizzes.forEach(q => {
+              try {
+                const parsed = typeof q.quiz_data === 'string' ? JSON.parse(q.quiz_data) : (q.quiz_data || []);
+                totalQuestions += parsed.length;
+              } catch(e) {}
+            });
+            
+            document.getElementById('statQuestionsAnswered').textContent = userData.total_answered !== undefined ? userData.total_answered : totalQuestions;
+            const avg = userData.avg_score !== undefined ? userData.avg_score : (qData.avg_score || 0);
+            document.getElementById('statAverageScore').textContent = `${Math.round(avg)}%`;
+            document.getElementById('dropAvgScore').textContent = `${Math.round(avg)}%`;
+
+            renderLibraryLists(quizzes);
           }
         } else {
           document.getElementById('appRoot').classList.remove('logged-in');
           document.getElementById('profileContainer').style.display = 'none';
-
-          document.getElementById('pageLanding').classList.add('active-page');
-          document.getElementById('pageOverview').classList.remove('active-page');
-          document.getElementById('pageGenerate').classList.remove('active-page');
-          document.getElementById('pageLibrary').classList.remove('active-page');
         }
-      }catch(e){}
-      finally{
-        document.getElementById('loadingOverlay').style.display='none';
+      } catch (e) {
+        console.error('Error loading dashboard:', e);
+      } finally {
+        if (loadingOverlay) loadingOverlay.style.display = 'none';
       }
     }
-    loadDashboard();
+
+    function renderLibraryLists(quizzes) {
+      const overviewList = document.querySelector('.overview-library-list');
+      const fullList = document.querySelector('.full-library-list');
+
+      if (!quizzes || quizzes.length === 0) {
+        const emptyMsg = '<p style="color:var(--muted);font-size:12px;padding:10px 20px;">No quizzes found. Create your first quiz!</p>';
+        if (overviewList) overviewList.innerHTML = emptyMsg;
+        if (fullList) fullList.innerHTML = emptyMsg;
+        return;
+      }
+
+      const generateItemsHtml = (items) => items.map((q, i) => {
+        const dateStr = new Date(q.created_at).toLocaleDateString();
+        let qCount = 0;
+        try { 
+          qCount = (typeof q.quiz_data === 'string' ? JSON.parse(q.quiz_data) : (q.quiz_data || [])).length; 
+        } catch(e){}
+        return `
+          <div class="library-item">
+            <div class="folder">📝</div>
+            <div>
+              <strong>Study Set #${items.length - i}</strong>
+              <span>${qCount} Questions • ${dateStr}</span>
+            </div>
+          </div>`;
+      }).join('');
+
+      if (overviewList) overviewList.innerHTML = generateItemsHtml(quizzes.slice(0, 3));
+      if (fullList) fullList.innerHTML = generateItemsHtml(quizzes);
+    }
+
+    document.addEventListener('DOMContentLoaded', loadDashboard);
+    if (document.readyState !== 'loading') loadDashboard();
   </script>
 </body>
 </html>
