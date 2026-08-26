@@ -62,7 +62,7 @@ async function initDb() {
 }
 initDb().catch(err => console.error('Database initialization error:', err));
 
-// Multer Upload Configuration (4.5 MB Vercel Serverless Limit)
+// Multer Upload Configuration
 const ALLOWED_MIME_TYPES = new Set([
   'image/jpeg',
   'image/png',
@@ -106,7 +106,7 @@ app.use((req, res, next) => {
   next();
 });
 
-// Passport Google Strategy Configuration
+// Passport Google Strategy
 passport.use(new GoogleStrategy({
     clientID: process.env.GOOGLE_CLIENT_ID || 'missing_client_id',
     clientSecret: process.env.GOOGLE_CLIENT_SECRET || 'missing_client_secret',
@@ -137,7 +137,7 @@ passport.use(new GoogleStrategy({
   }
 ));
 
-// Static Files
+// Serve Static Frontend Files
 const publicPath = path.join(__dirname, 'public');
 const vercelPublicPath = path.join(__dirname, '../public');
 app.use(express.static(publicPath));
@@ -154,7 +154,6 @@ const quizLimiter = rateLimit({
 // Auth Routes
 app.get('/auth/google', passport.authenticate('google', { scope: ['profile', 'email'], session: false }));
 
-// Custom OAuth Callback Handler to catch and display backend errors directly
 app.get('/auth/google/callback', (req, res, next) => {
   passport.authenticate('google', { session: false }, (err, user, info) => {
     if (err) {
@@ -190,7 +189,33 @@ app.get('/auth/google/callback', (req, res, next) => {
   })(req, res, next);
 });
 
-app.get('/api/user', (req, res) => res.json(req.user || null));
+// User Profile Endpoint (Matches Frontend loadDashboard Request)
+app.get('/api/me', async (req, res) => {
+  if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
+  try {
+    const scoreStatsRes = await db.execute({
+      sql: 'SELECT SUM(questions_answered) as totalAnswered, SUM(correct_answers) as totalCorrect FROM scores WHERE user_id = ?',
+      args: [req.user.id]
+    });
+    const scoreStats = scoreStatsRes.rows[0] || {};
+    const answered = scoreStats.totalAnswered || 0;
+    const correct = scoreStats.totalCorrect || 0;
+
+    const email = req.user.emails && req.user.emails[0] ? req.user.emails[0].value : '';
+    const name = req.user.displayName || (req.user.name ? `${req.user.name.givenName || ''} ${req.user.name.familyName || ''}`.trim() : 'User');
+
+    res.json({
+      id: req.user.id,
+      name,
+      email,
+      total_answered: answered,
+      avg_score: answered > 0 ? Math.round((correct / answered) * 100) : 0
+    });
+  } catch (err) {
+    console.error('Error fetching /api/me profile:', err);
+    res.status(500).json({ error: 'Failed to fetch user profile.' });
+  }
+});
 
 app.get('/logout', (req, res) => {
   res.clearCookie('token');
@@ -202,7 +227,7 @@ function ensureAuthenticated(req, res, next) {
   res.status(401).json({ error: 'You must be logged in to save or generate quizzes.' });
 }
 
-// AI Prompting & Parsing Helpers
+// AI Helper Functions
 const SYSTEM_PROMPT = `You are a distinguished professor at a rigorous, top-tier university. Your task is to generate exactly 10 highly challenging multiple-choice questions based on the provided study notes.
 
 CRITICAL INSTRUCTIONS:
@@ -302,10 +327,6 @@ app.post('/api/generate-quiz', quizLimiter, ensureAuthenticated, async (req, res
   }
 });
 
-app.get('/api/generate-quiz-file', (req, res) => {
-  res.status(405).json({ error: 'This endpoint requires a POST request with a file upload (multipart/form-data).' });
-});
-
 app.post('/api/generate-quiz-file', quizLimiter, ensureAuthenticated, (req, res) => {
   upload.single('file')(req, res, async (uploadErr) => {
     if (uploadErr) {
@@ -369,43 +390,6 @@ app.post('/api/generate-quiz-file', quizLimiter, ensureAuthenticated, (req, res)
       res.status(502).json({ error: err.message || 'Something went wrong on the server.' });
     }
   });
-});
-
-app.get('/api/dashboard', ensureAuthenticated, async (req, res) => {
-  try {
-    const userId = req.user.id;
-
-    const quizCountRes = await db.execute({
-      sql: 'SELECT COUNT(*) as quizzesMade FROM quizzes WHERE user_id = ?',
-      args: [userId]
-    });
-    
-    const scoreStatsRes = await db.execute({
-      sql: 'SELECT SUM(questions_answered) as totalAnswered, SUM(correct_answers) as totalCorrect FROM scores WHERE user_id = ?',
-      args: [userId]
-    });
-    
-    const recentSetsRes = await db.execute({
-      sql: 'SELECT quiz_data, created_at FROM quizzes WHERE user_id = ? ORDER BY created_at DESC LIMIT 3',
-      args: [userId]
-    });
-
-    const quizCount = quizCountRes.rows[0];
-    const scoreStats = scoreStatsRes.rows[0];
-    
-    const answered = scoreStats && scoreStats.totalAnswered ? scoreStats.totalAnswered : 0;
-    const correct = scoreStats && scoreStats.totalCorrect ? scoreStats.totalCorrect : 0;
-
-    res.json({
-      quizzesMade: quizCount ? quizCount.quizzesMade : 0,
-      questionsAnswered: answered,
-      averageScore: answered > 0 ? Math.round((correct / answered) * 100) : 0,
-      recentSets: recentSetsRes.rows || []
-    });
-  } catch (err) {
-    console.error('Dashboard error:', err);
-    res.status(500).json({ error: 'Failed to load dashboard' });
-  }
 });
 
 app.get('/api/quizzes', ensureAuthenticated, async (req, res) => {
