@@ -15,9 +15,7 @@ const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
 const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET;
 const BASE_URL = process.env.BASE_URL || 'https://quiz-gen-topaz.vercel.app';
 
-// Database Client (Turso / libSQL). Falls back to a local file for dev if
-// no remote credentials are set, but on Vercel you MUST set TURSO_DATABASE_URL
-// and TURSO_AUTH_TOKEN, since the deployed filesystem is read-only/ephemeral.
+// Database Client
 const db = createClient({
   url: process.env.TURSO_DATABASE_URL || 'file:local.db',
   authToken: process.env.TURSO_AUTH_TOKEN
@@ -64,10 +62,10 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use(cookieParser());
 app.use(cors({ origin: true, credentials: true }));
 
-// In-Memory Storage for File Uploads (Vercel compatible)
+// In-Memory Storage for File Uploads
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 10 * 1024 * 1024 } // 10MB limit
+  limits: { fileSize: 10 * 1024 * 1024 }
 });
 
 // Initialize Gemini AI client
@@ -77,13 +75,23 @@ const genAI = GEMINI_API_KEY ? new GoogleGenerativeAI(GEMINI_API_KEY) : null;
 // HELPER FUNCTIONS
 // ==========================================
 
-// Auth Middleware
+// Auth Middleware (Updated for better debugging and new cookie name)
 function authenticateToken(req, res, next) {
-  const token = req.cookies.token || (req.headers.authorization && req.headers.authorization.split(' ')[1]);
-  if (!token) return res.status(401).json({ error: 'Unauthorized' });
+  // Check for the new cookie name first, fallback to authorization header
+  const token = req.cookies.qf_session || (req.headers.authorization && req.headers.authorization.split(' ')[1]);
+  
+  if (!token) {
+    console.warn('Auth check failed: No token provided in cookies or headers.');
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
 
   jwt.verify(token, JWT_SECRET, (err, user) => {
-    if (err) return res.status(401).json({ error: 'Invalid or expired session' });
+    if (err) {
+      console.error('JWT Verification Failed:', err.name, err.message);
+      // Clear the bad cookie so it doesn't get stuck again
+      res.clearCookie('qf_session', { path: '/' }); 
+      return res.status(401).json({ error: 'Invalid or expired session' });
+    }
     req.user = user;
     next();
   });
@@ -145,7 +153,6 @@ async function generateQuizWithRetry(prompt, fileBuffer = null, mimeType = null,
       lastError = err;
       console.warn(`Gemini generation attempt ${attempt} failed: ${err.message}`);
       if (attempt < retries) {
-        // Wait 1.5s, 3s, etc. before retrying
         await new Promise(resolve => setTimeout(resolve, attempt * 1500));
       }
     }
@@ -214,8 +221,11 @@ app.get('/auth/google/callback', async (req, res) => {
     // Generate JWT Token
     const token = jwt.sign(userData, JWT_SECRET, { expiresIn: '24h' });
 
-    // Set secure HTTP-Only cookie
-    res.cookie('token', token, {
+    // Clear any legacy 'token' cookie just in case
+    res.clearCookie('token', { path: '/' });
+
+    // Set secure HTTP-Only cookie using the new name
+    res.cookie('qf_session', token, {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
       sameSite: 'lax',
@@ -232,6 +242,7 @@ app.get('/auth/google/callback', async (req, res) => {
 
 // Logout
 app.get('/logout', (req, res) => {
+  res.clearCookie('qf_session', { path: '/' });
   res.clearCookie('token', { path: '/' });
   res.redirect('/');
 });
