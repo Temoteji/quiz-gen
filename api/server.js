@@ -1,3 +1,4 @@
+require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const cookieParser = require('cookie-parser');
@@ -75,33 +76,27 @@ const genAI = GEMINI_API_KEY ? new GoogleGenerativeAI(GEMINI_API_KEY) : null;
 // HELPER FUNCTIONS
 // ==========================================
 
-// Auth Middleware (Updated for better debugging and new cookie name)
+// Auth Middleware
 function authenticateToken(req, res, next) {
-  // Check for the new cookie name first, fallback to authorization header
   const token = req.cookies.qf_session || (req.headers.authorization && req.headers.authorization.split(' ')[1]);
   
   if (!token) {
-    console.warn('Auth check failed: No token provided in cookies or headers.');
-    return res.status(401).json({ error: 'Unauthorized' });
+    return res.status(401).json({ error: 'Unauthorized: No token provided.' });
   }
 
   jwt.verify(token, JWT_SECRET, (err, user) => {
     if (err) {
-      console.error('JWT Verification Failed:', err.name, err.message);
-      // Clear the bad cookie so it doesn't get stuck again
       res.clearCookie('qf_session', { path: '/' }); 
-      return res.status(401).json({ error: 'Invalid or expired session' });
+      return res.status(401).json({ error: `Invalid session: ${err.message}` });
     }
     req.user = user;
     next();
   });
 }
 
-// AI Call Helper with Exponential Backoff Retry Logic
+// AI Call Helper
 async function generateQuizWithRetry(prompt, fileBuffer = null, mimeType = null, retries = 3) {
-  if (!genAI) {
-    throw new Error('GEMINI_API_KEY is not configured on the server.');
-  }
+  if (!genAI) throw new Error('GEMINI_API_KEY is not configured on the server.');
 
   const model = genAI.getGenerativeModel({ 
     model: 'gemini-1.5-flash',
@@ -124,25 +119,12 @@ async function generateQuizWithRetry(prompt, fileBuffer = null, mimeType = null,
   let lastError;
   for (let attempt = 1; attempt <= retries; attempt++) {
     try {
-      let contents = [];
-      if (fileBuffer && mimeType) {
-        contents = [
-          systemInstruction,
-          prompt,
-          {
-            inlineData: {
-              data: fileBuffer.toString('base64'),
-              mimeType
-            }
-          }
-        ];
-      } else {
-        contents = [systemInstruction, prompt];
-      }
+      let contents = fileBuffer && mimeType 
+        ? [systemInstruction, prompt, { inlineData: { data: fileBuffer.toString('base64'), mimeType } }]
+        : [systemInstruction, prompt];
 
       const result = await model.generateContent(contents);
-      const responseText = result.response.text();
-      const cleanedJson = responseText.replace(/```json|```/g, '').trim();
+      const cleanedJson = result.response.text().replace(/```json|```/g, '').trim();
       
       const parsedQuiz = JSON.parse(cleanedJson);
       if (!Array.isArray(parsedQuiz) || parsedQuiz.length === 0) {
@@ -151,10 +133,7 @@ async function generateQuizWithRetry(prompt, fileBuffer = null, mimeType = null,
       return parsedQuiz;
     } catch (err) {
       lastError = err;
-      console.warn(`Gemini generation attempt ${attempt} failed: ${err.message}`);
-      if (attempt < retries) {
-        await new Promise(resolve => setTimeout(resolve, attempt * 1500));
-      }
+      if (attempt < retries) await new Promise(resolve => setTimeout(resolve, attempt * 1500));
     }
   }
   throw lastError;
@@ -183,7 +162,6 @@ app.get('/auth/google/callback', async (req, res) => {
   if (!code) return res.redirect('/?error=NoCode');
 
   try {
-    // Exchange auth code for tokens
     const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -199,35 +177,42 @@ app.get('/auth/google/callback', async (req, res) => {
     const tokenData = await tokenRes.json();
     if (!tokenRes.ok) throw new Error(tokenData.error_description || 'Token exchange failed');
 
-    // Fetch user info from Google
     const userRes = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', {
       headers: { Authorization: `Bearer ${tokenData.access_token}` }
     });
+    
     const profile = await userRes.json();
+    
+    // Safely grab the ID whether Google sends 'id' or 'sub'
+    const userId = profile.id || profile.sub;
+
+    if (!userId) throw new Error('Failed to retrieve user ID from Google.');
 
     const userData = {
-      id: profile.id,
-      name: profile.name,
-      email: profile.email,
-      picture: profile.picture
+      id: String(userId),
+      name: profile.name || 'User',
+      email: profile.email || '',
+      picture: profile.picture || ''
     };
 
+    // Save to DB
     await db.execute({
       sql: `INSERT INTO users (id, name, email, picture) VALUES (?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET name = excluded.name, email = excluded.email, picture = excluded.picture`,
       args: [userData.id, userData.name, userData.email, userData.picture]
     });
 
-    // Generate JWT Token
+    // Generate JWT
     const token = jwt.sign(userData, JWT_SECRET, { expiresIn: '24h' });
 
-    // Clear any legacy 'token' cookie just in case
+    // Clean slate
     res.clearCookie('token', { path: '/' });
+    res.clearCookie('qf_session', { path: '/' });
 
-    // Set secure HTTP-Only cookie using the new name
+    // Set bulletproof cookie
     res.cookie('qf_session', token, {
       httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
+      secure: true, // Hardcoded true to survive Vercel proxy issues
       sameSite: 'lax',
       path: '/',
       maxAge: 24 * 60 * 60 * 1000
@@ -236,7 +221,7 @@ app.get('/auth/google/callback', async (req, res) => {
     res.redirect('/');
   } catch (err) {
     console.error('OAuth Callback Error:', err);
-    res.redirect('/?error=AuthFailed');
+    res.redirect(`/?error=${encodeURIComponent(err.message)}`);
   }
 });
 
@@ -250,12 +235,11 @@ app.get('/logout', (req, res) => {
 // Get Current Authenticated User Profile
 app.get('/api/me', authenticateToken, async (req, res) => {
   try {
-    const userId = req.user.id;
     const result = await db.execute({
       sql: `SELECT COALESCE(SUM(questions_answered), 0) AS total_answered,
                    COALESCE(SUM(correct_answers), 0) AS correct_answered
             FROM scores WHERE user_id = ?`,
-      args: [userId]
+      args: [req.user.id]
     });
 
     const row = result.rows[0] || { total_answered: 0, correct_answered: 0 };
@@ -284,19 +268,17 @@ app.get('/api/me', authenticateToken, async (req, res) => {
 // Get All Quizzes for Logged-In User
 app.get('/api/quizzes', authenticateToken, async (req, res) => {
   try {
-    const userId = req.user.id;
-
     const quizzesResult = await db.execute({
       sql: `SELECT id, user_id, quiz_data, created_at FROM quizzes
             WHERE user_id = ? ORDER BY created_at DESC`,
-      args: [userId]
+      args: [req.user.id]
     });
 
     const statsResult = await db.execute({
       sql: `SELECT COALESCE(SUM(questions_answered), 0) AS total_answered,
                    COALESCE(SUM(correct_answers), 0) AS correct_answered
             FROM scores WHERE user_id = ?`,
-      args: [userId]
+      args: [req.user.id]
     });
 
     const statsRow = statsResult.rows[0] || { total_answered: 0, correct_answered: 0 };
@@ -336,9 +318,7 @@ app.post('/api/generate-quiz', authenticateToken, async (req, res) => {
 
 // Generate Quiz from Uploaded File (Image/PDF)
 app.post('/api/generate-quiz-file', authenticateToken, upload.single('file'), async (req, res) => {
-  if (!req.file) {
-    return res.status(400).json({ error: 'No file uploaded.' });
-  }
+  if (!req.file) return res.status(400).json({ error: 'No file uploaded.' });
 
   try {
     const prompt = 'Extract the key educational topics from this uploaded document and generate a 10-question quiz.';
@@ -360,18 +340,17 @@ app.post('/api/generate-quiz-file', authenticateToken, upload.single('file'), as
 app.post('/api/save-score', authenticateToken, async (req, res) => {
   try {
     const { answered, correct } = req.body;
-    const userId = req.user.id;
-
+    
     await db.execute({
       sql: `INSERT INTO scores (user_id, questions_answered, correct_answers) VALUES (?, ?, ?)`,
-      args: [userId, Number(answered) || 0, Number(correct) || 0]
+      args: [req.user.id, Number(answered) || 0, Number(correct) || 0]
     });
 
     const statsResult = await db.execute({
       sql: `SELECT COALESCE(SUM(questions_answered), 0) AS total_answered,
                    COALESCE(SUM(correct_answers), 0) AS correct_answered
             FROM scores WHERE user_id = ?`,
-      args: [userId]
+      args: [req.user.id]
     });
 
     const row = statsResult.rows[0] || { total_answered: 0, correct_answered: 0 };
