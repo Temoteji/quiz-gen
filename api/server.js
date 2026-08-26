@@ -18,9 +18,11 @@ const parsePdf = async (buffer) => {
 const app = express();
 const PORT = process.env.PORT || 3000;
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+const JWT_SECRET = process.env.SESSION_SECRET || 'fallback_secret_key';
 
 app.set('trust proxy', 1);
 
+// Database Client Setup
 if (process.env.NODE_ENV === 'production' && !process.env.TURSO_DATABASE_URL) {
   console.warn('CRITICAL: TURSO_DATABASE_URL is missing in production environment.');
 }
@@ -60,6 +62,7 @@ async function initDb() {
 }
 initDb().catch(err => console.error('Database initialization error:', err));
 
+// Multer Upload Configuration (4.5 MB Vercel Serverless Limit)
 const ALLOWED_MIME_TYPES = new Set([
   'image/jpeg',
   'image/png',
@@ -68,7 +71,6 @@ const ALLOWED_MIME_TYPES = new Set([
   'application/pdf'
 ]);
 
-// Capped at 4.5 MB to strictly match Vercel Serverless request body limits
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 4.5 * 1024 * 1024 },
@@ -81,22 +83,17 @@ const upload = multer({
   }
 });
 
-if (!GEMINI_API_KEY) {
-  console.warn('WARNING: GEMINI_API_KEY is not set. The quiz endpoint will fail until it is set.');
-}
-
+// OpenAI / Gemini Integration
 const openai = new OpenAI({
   baseURL: "https://generativelanguage.googleapis.com/v1beta/openai/",
-  apiKey: GEMINI_API_KEY,
+  apiKey: GEMINI_API_KEY || 'missing_key',
 });
 
 app.use(express.json({ limit: '100kb' }));
-
-const JWT_SECRET = process.env.SESSION_SECRET || 'fallback_secret_key';
-
 app.use(cookieParser());
 app.use(passport.initialize());
 
+// JWT Auth Middleware
 app.use((req, res, next) => {
   const token = req.cookies.token;
   if (token) {
@@ -109,9 +106,10 @@ app.use((req, res, next) => {
   next();
 });
 
+// Passport Google Strategy Configuration
 passport.use(new GoogleStrategy({
-    clientID: process.env.GOOGLE_CLIENT_ID,
-    clientSecret: process.env.GOOGLE_CLIENT_SECRET,
+    clientID: process.env.GOOGLE_CLIENT_ID || 'missing_client_id',
+    clientSecret: process.env.GOOGLE_CLIENT_SECRET || 'missing_client_secret',
     callbackURL: process.env.NODE_ENV === 'production' 
       ? "https://quiz-gen-topaz.vercel.app/auth/google/callback" 
       : "http://localhost:3000/auth/google/callback",
@@ -133,11 +131,13 @@ passport.use(new GoogleStrategy({
       }
       return cb(null, profile);
     } catch (err) {
+      console.error('Error during Passport user lookup/insert:', err);
       return cb(err);
     }
   }
 ));
 
+// Static Files
 const publicPath = path.join(__dirname, 'public');
 const vercelPublicPath = path.join(__dirname, '../public');
 app.use(express.static(publicPath));
@@ -151,30 +151,44 @@ const quizLimiter = rateLimit({
   message: { error: 'Too many requests from this device. Try again in a bit.' }
 });
 
+// Auth Routes
 app.get('/auth/google', passport.authenticate('google', { scope: ['profile', 'email'], session: false }));
 
-app.get('/auth/google/callback', 
-  passport.authenticate('google', { session: false, failureRedirect: '/' }),
-  (req, res) => {
+// Custom OAuth Callback Handler to catch and display backend errors directly
+app.get('/auth/google/callback', (req, res, next) => {
+  passport.authenticate('google', { session: false }, (err, user, info) => {
+    if (err) {
+      console.error('OAuth Authentication Exception:', err);
+      return res.status(500).json({ 
+        error: 'Authentication process failed.', 
+        details: err.message || 'Database or configuration error during login.' 
+      });
+    }
+    if (!user) {
+      return res.status(401).json({ error: 'Google authentication was denied or failed.' });
+    }
+
     const token = jwt.sign(
       {
-        id: req.user.id,
-        displayName: req.user.displayName,
-        name: req.user.name,
-        emails: req.user.emails
+        id: user.id,
+        displayName: user.displayName,
+        name: user.name,
+        emails: user.emails
       },
       JWT_SECRET,
       { expiresIn: '24h' }
     );
+
     res.cookie('token', token, {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
       sameSite: 'lax',
       maxAge: 24 * 60 * 60 * 1000
     });
+
     res.redirect('/');
-  }
-);
+  })(req, res, next);
+});
 
 app.get('/api/user', (req, res) => res.json(req.user || null));
 
@@ -188,6 +202,7 @@ function ensureAuthenticated(req, res, next) {
   res.status(401).json({ error: 'You must be logged in to save or generate quizzes.' });
 }
 
+// AI Prompting & Parsing Helpers
 const SYSTEM_PROMPT = `You are a distinguished professor at a rigorous, top-tier university. Your task is to generate exactly 10 highly challenging multiple-choice questions based on the provided study notes.
 
 CRITICAL INSTRUCTIONS:
@@ -228,7 +243,6 @@ function shuffleQuizOptions(quizArray) {
   });
 }
 
-// Safely extracts the JSON block from response text to prevent parse errors
 function parseAndShuffleQuiz(responseText) {
   const match = responseText.match(/\[[\s\S]*\]/);
   if (!match) {
@@ -241,7 +255,6 @@ function parseAndShuffleQuiz(responseText) {
   return shuffleQuizOptions(quiz);
 }
 
-// Retries capped at 1 to prevent hitting Vercel's 10-second serverless execution limit
 async function callGeminiForQuiz(userPrompt, retries = 1) {
   for (let attempt = 1; attempt <= retries + 1; attempt++) {
     try {
@@ -267,6 +280,7 @@ async function callGeminiForQuiz(userPrompt, retries = 1) {
   }
 }
 
+// API Endpoints
 app.post('/api/generate-quiz', quizLimiter, ensureAuthenticated, async (req, res) => {
   try {
     const notes = (req.body && req.body.notes ? String(req.body.notes) : '').trim();
@@ -418,6 +432,12 @@ app.post('/api/save-score', ensureAuthenticated, async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: 'Failed to save score' });
   }
+});
+
+// Global Error Handler
+app.use((err, req, res, next) => {
+  console.error('Unhandled Server Error:', err);
+  res.status(500).json({ error: 'Internal Server Error', details: err.message });
 });
 
 if (require.main === module) {
