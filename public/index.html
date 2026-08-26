@@ -458,12 +458,13 @@
             const questions = typeof item.quiz_data === 'string' ? JSON.parse(item.quiz_data) : (item.quiz_data || []);
             const dateStr = new Date(item.created_at).toLocaleDateString();
             const html = `
-              <div style="border: 1px solid var(--line); border-radius: 8px; padding: 14px; background: var(--paper);">
-                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-                  <span style="font-weight: 600; color: var(--coral); font-size: 13px;">Set #${data.quizzes.length - index} (${dateStr})</span>
-                  <span style="font-size: 11px; color: var(--muted);">${questions.length} Questions</span>
+              <div class="library-item" style="border: 1px solid var(--line); border-radius: 8px; padding: 14px; background: var(--paper); margin-bottom: 8px;">
+                <div class="folder" style="margin-right: 12px;">📝</div>
+                <div>
+                  <strong>Study Set #${data.quizzes.length - index}</strong>
+                  <span>${questions.length} Questions • ${dateStr}</span>
+                  <p style="font-size: 12px; color: var(--ink); margin-top: 4px;">${questions[0]?.question || 'Study Set'}</p>
                 </div>
-                <p style="font-size: 12px; color: var(--ink); line-height: 1.4;">${questions[0]?.question || 'Study Set'}</p>
               </div>`;
             listContainer.insertAdjacentHTML('beforeend', html);
           });
