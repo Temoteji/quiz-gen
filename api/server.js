@@ -98,12 +98,12 @@ function authenticateToken(req, res, next) {
   });
 }
 
-// AI Call Helper (Updated for v0.24+)
+// AI Call Helper (Updated for v0.24+ and 404 routing fix)
 async function generateQuizWithRetry(prompt, fileBuffer = null, mimeType = null, retries = 3) {
   if (!genAI) throw new Error('GEMINI_API_KEY is not configured on the server.');
 
   const model = genAI.getGenerativeModel({ 
-    model: 'gemini-1.5-flash',
+    model: 'gemini-1.5-flash-latest',
     generationConfig: { responseMimeType: 'application/json' },
     systemInstruction: `
       You are an expert academic quiz generator.
