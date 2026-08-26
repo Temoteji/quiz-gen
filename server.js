@@ -21,6 +21,10 @@ const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 
 app.set('trust proxy', 1);
 
+if (process.env.NODE_ENV === 'production' && !process.env.TURSO_DATABASE_URL) {
+  console.warn('CRITICAL: TURSO_DATABASE_URL is missing in production environment.');
+}
+
 const db = createClient({
   url: process.env.TURSO_DATABASE_URL || 'file:quizforge.db',
   authToken: process.env.TURSO_AUTH_TOKEN,
@@ -64,9 +68,10 @@ const ALLOWED_MIME_TYPES = new Set([
   'application/pdf'
 ]);
 
+// Capped at 4.5 MB to strictly match Vercel Serverless request body limits
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 10 * 1024 * 1024 },
+  limits: { fileSize: 4.5 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
     if (ALLOWED_MIME_TYPES.has(file.mimetype)) {
       cb(null, true);
@@ -201,7 +206,6 @@ The output must exactly match this structure:
   }
 ]`;
 
-// Helper function to shuffle options and recalculate correctIndex securely on the server
 function shuffleQuizOptions(quizArray) {
   return quizArray.map(item => {
     let optionsWithIndices = item.options.map((opt, idx) => ({ 
@@ -224,11 +228,25 @@ function shuffleQuizOptions(quizArray) {
   });
 }
 
-async function callGeminiForQuiz(userPrompt, retries = 3) {
-  for (let attempt = 1; attempt <= retries; attempt++) {
+// Safely extracts the JSON block from response text to prevent parse errors
+function parseAndShuffleQuiz(responseText) {
+  const match = responseText.match(/\[[\s\S]*\]/);
+  if (!match) {
+    throw new Error('The AI response did not contain a valid JSON array.');
+  }
+  const quiz = JSON.parse(match[0]);
+  if (!Array.isArray(quiz) || quiz.length === 0) {
+    throw new Error('The AI did not return any questions. Try again.');
+  }
+  return shuffleQuizOptions(quiz);
+}
+
+// Retries capped at 1 to prevent hitting Vercel's 10-second serverless execution limit
+async function callGeminiForQuiz(userPrompt, retries = 1) {
+  for (let attempt = 1; attempt <= retries + 1; attempt++) {
     try {
       const completion = await openai.chat.completions.create({
-        model: "gemini-1.5-flash",
+        model: "gemini-2.0-flash",
         messages: [
           { role: "system", content: SYSTEM_PROMPT },
           { role: "user", content: userPrompt }
@@ -236,24 +254,11 @@ async function callGeminiForQuiz(userPrompt, retries = 3) {
       });
 
       const responseText = completion.choices[0].message.content;
-      let raw = responseText.replace(/```json|```/g, '').trim();
-
-      let quiz;
-      try {
-        quiz = JSON.parse(raw);
-      } catch (parseErr) {
-        console.error('Failed to parse model output as JSON:', raw);
-        throw new Error('The AI returned an unexpected format. Try again.');
-      }
-      if (!Array.isArray(quiz) || quiz.length === 0) {
-        throw new Error('The AI did not return any questions. Try again.');
-      }
-
-      return shuffleQuizOptions(quiz);
+      return parseAndShuffleQuiz(responseText);
     } catch (error) {
-      if (error.status === 429 && attempt < retries) {
-        console.warn(`Rate limit hit. Retrying attempt ${attempt + 1} of ${retries}...`);
-        await new Promise(resolve => setTimeout(resolve, 2500));
+      if (error.status === 429 && attempt <= retries) {
+        console.warn(`Rate limit hit. Retrying attempt ${attempt}...`);
+        await new Promise(resolve => setTimeout(resolve, 1000));
         continue;
       }
       console.error('Gemini API error:', error);
@@ -266,7 +271,7 @@ app.post('/api/generate-quiz', quizLimiter, ensureAuthenticated, async (req, res
   try {
     const notes = (req.body && req.body.notes ? String(req.body.notes) : '').trim();
     if (notes.length < 30) return res.status(400).json({ error: 'Notes are too short to build a quiz from.' });
-    if (notes.length > 12000) return res.status(400).json({ error: 'Notes are too long. Try a shorter excerpt.' });
+    if (notes.length > 8000) return res.status(400).json({ error: 'Notes are too long. Try a shorter excerpt.' });
     if (!GEMINI_API_KEY) return res.status(500).json({ error: 'Server is missing its Gemini API key.' });
 
     const quiz = await callGeminiForQuiz(`Here are the notes:\n\n${notes}`);
@@ -290,27 +295,54 @@ app.get('/api/generate-quiz-file', (req, res) => {
 app.post('/api/generate-quiz-file', quizLimiter, ensureAuthenticated, (req, res) => {
   upload.single('file')(req, res, async (uploadErr) => {
     if (uploadErr) {
-      const msg = uploadErr.code === 'LIMIT_FILE_SIZE' ? 'File is too large. Max size is 10MB.' : (uploadErr.message || 'Could not process the uploaded file.');
+      const msg = uploadErr.code === 'LIMIT_FILE_SIZE' 
+        ? 'File is too large. Max limit on Vercel is 4.5MB.' 
+        : (uploadErr.message || 'Could not process the uploaded file.');
       return res.status(400).json({ error: msg });
     }
     try {
       if (!req.file) return res.status(400).json({ error: 'No file was uploaded.' });
       if (!GEMINI_API_KEY) return res.status(500).json({ error: 'Server is missing its Gemini API key.' });
 
-      let extractedText = "";
+      let quiz;
 
       if (req.file.mimetype === 'application/pdf') {
-        const pdfData = await parsePdf(req.file.buffer);
-        extractedText = pdfData.text;
+        let extractedText = "";
+        try {
+          const pdfData = await parsePdf(req.file.buffer);
+          extractedText = pdfData.text || "";
+        } catch (pdfErr) {
+          return res.status(400).json({ error: 'Could not extract text from the PDF file.' });
+        }
+
+        if (extractedText.trim().length < 30) {
+          return res.status(400).json({ error: 'Could not extract enough readable text from the PDF. Ensure it contains selectable text.' });
+        }
+
+        quiz = await callGeminiForQuiz(`Here is the text extracted from the uploaded document:\n\n${extractedText.substring(0, 8000)}`);
+      } else if (req.file.mimetype.startsWith('image/')) {
+        const base64Image = req.file.buffer.toString('base64');
+        const dataUrl = `data:${req.file.mimetype};base64,${base64Image}`;
+
+        const completion = await openai.chat.completions.create({
+          model: "gemini-2.0-flash",
+          messages: [
+            { role: "system", content: SYSTEM_PROMPT },
+            {
+              role: "user",
+              content: [
+                { type: "text", text: "Generate academic multiple-choice questions based on the study notes in this image." },
+                { type: "image_url", image_url: { url: dataUrl } }
+              ]
+            }
+          ]
+        });
+
+        const responseText = completion.choices[0].message.content;
+        quiz = parseAndShuffleQuiz(responseText);
       } else {
-        extractedText = `Uploaded file name: ${req.file.originalname}. Please generate academic questions based on standard themes matching this file title.`;
+        return res.status(400).json({ error: 'Unsupported file format.' });
       }
-
-      if (!extractedText || extractedText.trim().length < 30) {
-        return res.status(400).json({ error: 'Could not extract enough readable text from the uploaded file. Try pasting the text directly.' });
-      }
-
-      const quiz = await callGeminiForQuiz(`Here is the text extracted from the uploaded document:\n\n${extractedText.substring(0, 10000)}`);
 
       await db.execute({
         sql: 'INSERT INTO quizzes (user_id, quiz_data) VALUES (?, ?)',
