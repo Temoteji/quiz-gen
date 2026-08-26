@@ -62,7 +62,8 @@
     .primary:active{transform:translateY(2px);box-shadow:0 2px 0 #bf513c}
     .primary:disabled{opacity:.55;cursor:wait}
     .library-list{padding:7px 20px 15px}
-    .library-item{display:flex;gap:11px;align-items:center;padding:14px 0;border-bottom:1px solid #ebe7dd}
+    .library-item{display:flex;gap:11px;align-items:center;padding:14px 0;border-bottom:1px solid #ebe7dd;cursor:pointer;transition:background 0.15s;border-radius:6px}
+    .library-item:hover{background:#f3f0e8;padding-left:6px;padding-right:6px}
     .library-item:last-child{border:0}
     .folder{width:34px;height:34px;display:grid;place-items:center;background:#f5e2c3;border-radius:7px;font-size:16px}
     .library-item strong{display:block;font-size:12px;margin-bottom:4px}
@@ -329,6 +330,8 @@
   <script>
     const notesInput=document.getElementById('notesInput'),generateBtn=document.getElementById('generateBtn'),tabText=document.getElementById('tabText'),tabFile=document.getElementById('tabFile'),panelText=document.getElementById('panelText'),panelFile=document.getElementById('panelFile'),dropZone=document.getElementById('dropZone'),fileInput=document.getElementById('fileInput'),fileChip=document.getElementById('fileChip'),fileName=document.getElementById('fileName'),filePreview=document.getElementById('filePreview'),removeFileBtn=document.getElementById('removeFileBtn'),statusEl=document.getElementById('status'),errorContainer=document.getElementById('errorMsg'),errorText=errorContainer.querySelector('span'),generatorPanel=document.getElementById('generatorPanel'),quizCard=document.getElementById('quizCard'),doneCard=document.getElementById('doneCard'),qnum=document.getElementById('qnum'),qtext=document.getElementById('qtext'),optionsWrap=document.getElementById('optionsWrap'),explainContainer=document.getElementById('explain'),explainText=document.getElementById('explainText'),nextBtn=document.getElementById('nextBtn'),scoreLabel=document.getElementById('scoreLabel'),restartBtn=document.getElementById('restartBtn');let mode='text',selectedFile=null,quiz=[],current=0,score=0,answered=0;
     
+    let globalQuizzes = [];
+
     const dateOptions = { weekday: 'long', month: 'long', day: 'numeric' };
     document.querySelector('.date-header').textContent = new Date().toLocaleDateString('en-US', dateOptions);
 
@@ -377,7 +380,7 @@
         options[question.correctIndex].classList.add('correct');
       }
       answered++;
-      explainText.textContent=question.explanation||'No explanation provided.';
+      explainText.innerHTML=`<strong>Correct Answer: ${['A','B','C','D'][question.correctIndex]}</strong><br/>${question.explanation||'No explanation provided.'}`;
       explainContainer.style.display='block';
       nextBtn.style.display='inline-block';
       nextBtn.textContent=current===quiz.length-1?'Finish quiz ->':'Next question ->';
@@ -447,27 +450,63 @@
     const viewAllBtn = document.getElementById('viewAllBtn');
     const closeModalBtn = document.getElementById('closeModalBtn');
 
+    function loadQuizFromArchive(quizDataJson) {
+      try {
+        const parsed = typeof quizDataJson === 'string' ? JSON.parse(quizDataJson) : quizDataJson;
+        if (!Array.isArray(parsed) || parsed.length === 0) return;
+        quiz = parsed;
+        current = 0;
+        score = 0;
+        answered = 0;
+
+        document.querySelectorAll('.page-view').forEach(p => p.classList.remove('active-page'));
+        document.getElementById('pageGenerate').classList.add('active-page');
+        navItems.forEach(navItem => {
+          navItem.classList.toggle('active', navItem.getAttribute('data-target') === 'pageGenerate');
+        });
+
+        generatorPanel.style.display = 'none';
+        doneCard.style.display = 'none';
+        quizCard.style.display = 'block';
+        renderQuestion();
+        quizCard.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      } catch(e) {
+        console.error('Failed to load archived quiz:', e);
+      }
+    }
+
     async function openQuizModal() {
       try {
         const res = await fetch('/api/quizzes');
         const data = await res.json();
+        globalQuizzes = data.quizzes || [];
         const listContainer = document.getElementById('modalQuizList');
         listContainer.innerHTML = '';
-        if (data.quizzes && data.quizzes.length > 0) {
-          data.quizzes.forEach((item, index) => {
+        if (globalQuizzes.length > 0) {
+          globalQuizzes.forEach((item, index) => {
             const questions = typeof item.quiz_data === 'string' ? JSON.parse(item.quiz_data) : (item.quiz_data || []);
             const dateStr = new Date(item.created_at).toLocaleDateString();
             const html = `
-              <div class="library-item" style="border: 1px solid var(--line); border-radius: 8px; padding: 14px; background: var(--paper); margin-bottom: 8px;">
-                <div class="folder" style="margin-right: 12px;">📝</div>
-                <div>
-                  <strong>Study Set #${data.quizzes.length - index}</strong>
+              <div class="library-item modal-quiz-trigger" data-index="${index}" style="border: 1px solid var(--line); border-radius: 8px; padding: 14px; background: var(--paper); margin-bottom: 8px;">
+                <div class="folder" style="margin-right: 12px; display:inline-grid; vertical-align:middle;">📝</div>
+                <div style="display:inline-block; vertical-align:middle; width: calc(100% - 60px);">
+                  <strong>Study Set #${globalQuizzes.length - index}</strong>
                   <span>${questions.length} Questions • ${dateStr}</span>
                   <p style="font-size: 12px; color: var(--ink); margin-top: 4px;">${questions[0]?.question || 'Study Set'}</p>
                 </div>
               </div>`;
             listContainer.insertAdjacentHTML('beforeend', html);
           });
+
+          // Attach click triggers for modal items
+          listContainer.querySelectorAll('.modal-quiz-trigger').forEach(el => {
+            el.onclick = () => {
+              const idx = el.getAttribute('data-index');
+              quizModal.style.display = 'none';
+              loadQuizFromArchive(globalQuizzes[idx].quiz_data);
+            };
+          });
+
         } else {
           listContainer.innerHTML = '<p style="color: var(--muted); font-size: 12px; text-align: center; padding: 20px;">No saved study sets found.</p>';
         }
@@ -525,13 +564,13 @@
           const qRes = await fetch('/api/quizzes');
           if (qRes.ok) {
             const qData = await qRes.json();
-            const quizzes = qData.quizzes || [];
+            globalQuizzes = qData.quizzes || [];
             
-            document.getElementById('dropQuizCount').textContent = quizzes.length;
-            document.getElementById('statQuizzesMade').textContent = quizzes.length;
+            document.getElementById('dropQuizCount').textContent = globalQuizzes.length;
+            document.getElementById('statQuizzesMade').textContent = globalQuizzes.length;
 
             let totalQuestions = 0;
-            quizzes.forEach(q => {
+            globalQuizzes.forEach(q => {
               try {
                 const parsed = typeof q.quiz_data === 'string' ? JSON.parse(q.quiz_data) : (q.quiz_data || []);
                 totalQuestions += parsed.length;
@@ -543,7 +582,7 @@
             document.getElementById('statAverageScore').textContent = `${Math.round(avg)}%`;
             document.getElementById('dropAvgScore').textContent = `${Math.round(avg)}%`;
 
-            renderLibraryLists(quizzes);
+            renderLibraryLists(globalQuizzes);
           }
         } else {
           // Unauthenticated State
@@ -571,24 +610,40 @@
         return;
       }
 
-      const generateItemsHtml = (items) => items.map((q, i) => {
+      const generateItemsHtml = (items, isSlice = false) => items.map((q, i) => {
         const dateStr = new Date(q.created_at).toLocaleDateString();
         let qCount = 0;
         try { 
           qCount = (typeof q.quiz_data === 'string' ? JSON.parse(q.quiz_data) : (q.quiz_data || [])).length; 
         } catch(e){}
+        // Find actual index in globalQuizzes array
+        const realIndex = isSlice ? i : i;
         return `
-          <div class="library-item">
+          <div class="library-item clickable-quiz-item" data-index="${realIndex}">
             <div class="folder">📝</div>
             <div>
-              <strong>Study Set #${items.length - i}</strong>
+              <strong>Study Set #${quizzes.length - i}</strong>
               <span>${qCount} Questions • ${dateStr}</span>
             </div>
           </div>`;
       }).join('');
 
-      if (overviewList) overviewList.innerHTML = generateItemsHtml(quizzes.slice(0, 3));
-      if (fullList) fullList.innerHTML = generateItemsHtml(quizzes);
+      if (overviewList) {
+        overviewList.innerHTML = generateItemsHtml(quizzes.slice(0, 3), false);
+      }
+      if (fullList) {
+        fullList.innerHTML = generateItemsHtml(quizzes, false);
+      }
+
+      // Attach click events to load archived quizzes
+      document.querySelectorAll('.clickable-quiz-item').forEach(el => {
+        el.onclick = () => {
+          const idx = el.getAttribute('data-index');
+          if (globalQuizzes[idx]) {
+            loadQuizFromArchive(globalQuizzes[idx].quiz_data);
+          }
+        };
+      });
     }
 
     document.addEventListener('DOMContentLoaded', loadDashboard);
