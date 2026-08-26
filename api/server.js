@@ -22,14 +22,16 @@ const db = createClient({
   authToken: process.env.TURSO_AUTH_TOKEN
 });
 
+// Database Initialization with Schema Patch for the missing 'picture' column
 let dbReady = db.execute(`
   CREATE TABLE IF NOT EXISTS users (
     id TEXT PRIMARY KEY,
     name TEXT,
-    email TEXT,
-    picture TEXT
+    email TEXT
   )
-`).then(() => db.execute(`
+`)
+.then(() => db.execute(`ALTER TABLE users ADD COLUMN picture TEXT`).catch(() => {}))
+.then(() => db.execute(`
   CREATE TABLE IF NOT EXISTS quizzes (
     id TEXT PRIMARY KEY,
     user_id TEXT,
@@ -37,7 +39,8 @@ let dbReady = db.execute(`
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY(user_id) REFERENCES users(id)
   )
-`)).then(() => db.execute(`
+`))
+.then(() => db.execute(`
   CREATE TABLE IF NOT EXISTS scores (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id TEXT,
@@ -45,7 +48,8 @@ let dbReady = db.execute(`
     correct_answers INTEGER,
     FOREIGN KEY(user_id) REFERENCES users(id)
   )
-`)).catch(err => console.error('DB init error:', err));
+`))
+.catch(err => console.error('DB init error:', err));
 
 // Ensure tables exist before handling any request
 app.use(async (req, res, next) => {
@@ -212,7 +216,7 @@ app.get('/auth/google/callback', async (req, res) => {
     // Set bulletproof cookie
     res.cookie('qf_session', token, {
       httpOnly: true,
-      secure: true, // Hardcoded true to survive Vercel proxy issues
+      secure: true, 
       sameSite: 'lax',
       path: '/',
       maxAge: 24 * 60 * 60 * 1000
