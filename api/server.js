@@ -98,36 +98,38 @@ function authenticateToken(req, res, next) {
   });
 }
 
-// AI Call Helper
+// AI Call Helper (Updated for v0.24+)
 async function generateQuizWithRetry(prompt, fileBuffer = null, mimeType = null, retries = 3) {
   if (!genAI) throw new Error('GEMINI_API_KEY is not configured on the server.');
 
   const model = genAI.getGenerativeModel({ 
     model: 'gemini-1.5-flash',
-    generationConfig: { responseMimeType: 'application/json' }
+    generationConfig: { responseMimeType: 'application/json' },
+    systemInstruction: `
+      You are an expert academic quiz generator.
+      Generate a JSON array of exactly 10 multiple-choice questions based on the provided material.
+      Each item must strictly follow this structure:
+      {
+        "question": "Clear and challenging question text",
+        "options": ["Option A", "Option B", "Option C", "Option D"],
+        "correctIndex": 0,
+        "explanation": "Detailed explanation of why this answer is correct."
+      }
+      Ensure options are distinct and correctIndex is an integer from 0 to 3.
+    `
   });
-
-  const systemInstruction = `
-    You are an expert academic quiz generator.
-    Generate a JSON array of exactly 10 multiple-choice questions based on the provided material.
-    Each item must strictly follow this structure:
-    {
-      "question": "Clear and challenging question text",
-      "options": ["Option A", "Option B", "Option C", "Option D"],
-      "correctIndex": 0,
-      "explanation": "Detailed explanation of why this answer is correct."
-    }
-    Ensure options are distinct and correctIndex is an integer from 0 to 3.
-  `;
 
   let lastError;
   for (let attempt = 1; attempt <= retries; attempt++) {
     try {
-      let contents = fileBuffer && mimeType 
-        ? [systemInstruction, prompt, { inlineData: { data: fileBuffer.toString('base64'), mimeType } }]
-        : [systemInstruction, prompt];
+      const parts = [{ text: prompt }];
+      if (fileBuffer && mimeType) {
+        parts.push({
+          inlineData: { data: fileBuffer.toString('base64'), mimeType: mimeType }
+        });
+      }
 
-      const result = await model.generateContent(contents);
+      const result = await model.generateContent(parts);
       const cleanedJson = result.response.text().replace(/```json|```/g, '').trim();
       
       const parsedQuiz = JSON.parse(cleanedJson);
@@ -137,6 +139,7 @@ async function generateQuizWithRetry(prompt, fileBuffer = null, mimeType = null,
       return parsedQuiz;
     } catch (err) {
       lastError = err;
+      console.error(`Gemini Attempt ${attempt} failed:`, err.message);
       if (attempt < retries) await new Promise(resolve => setTimeout(resolve, attempt * 1500));
     }
   }
