@@ -98,7 +98,7 @@ function authenticateToken(req, res, next) {
   });
 }
 
-// AI Call Helper (Updated for v0.24+ and 404 routing fix)
+// AI Call Helper (Using latest model string)
 async function generateQuizWithRetry(prompt, fileBuffer = null, mimeType = null, retries = 3) {
   if (!genAI) throw new Error('GEMINI_API_KEY is not configured on the server.');
 
@@ -190,7 +190,6 @@ app.get('/auth/google/callback', async (req, res) => {
     
     const profile = await userRes.json();
     
-    // Safely grab the ID whether Google sends 'id' or 'sub'
     const userId = profile.id || profile.sub;
 
     if (!userId) throw new Error('Failed to retrieve user ID from Google.');
@@ -202,21 +201,17 @@ app.get('/auth/google/callback', async (req, res) => {
       picture: profile.picture || ''
     };
 
-    // Save to DB
     await db.execute({
       sql: `INSERT INTO users (id, name, email, picture) VALUES (?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET name = excluded.name, email = excluded.email, picture = excluded.picture`,
       args: [userData.id, userData.name, userData.email, userData.picture]
     });
 
-    // Generate JWT
     const token = jwt.sign(userData, JWT_SECRET, { expiresIn: '24h' });
 
-    // Clean slate
     res.clearCookie('token', { path: '/' });
     res.clearCookie('qf_session', { path: '/' });
 
-    // Set bulletproof cookie
     res.cookie('qf_session', token, {
       httpOnly: true,
       secure: true, 
@@ -319,7 +314,8 @@ app.post('/api/generate-quiz', authenticateToken, async (req, res) => {
     res.json({ quiz: quizData });
   } catch (err) {
     console.error('Quiz Generation Error:', err);
-    res.status(500).json({ error: 'The AI service failed to respond. Please try again shortly.' });
+    // Exposing the raw error to the frontend
+    res.status(500).json({ error: `AI Error: ${err.message}` });
   }
 });
 
@@ -339,7 +335,8 @@ app.post('/api/generate-quiz-file', authenticateToken, upload.single('file'), as
     res.json({ quiz: quizData });
   } catch (err) {
     console.error('File Quiz Generation Error:', err);
-    res.status(500).json({ error: 'The AI service failed to process the file. Please try again.' });
+    // Exposing the raw error to the frontend
+    res.status(500).json({ error: `AI Error: ${err.message}` });
   }
 });
 
