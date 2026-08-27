@@ -370,8 +370,8 @@
     function handleFileSelect(file){
       const allowed=['image/jpeg','image/png','image/webp','image/gif','application/pdf'];
       if(!allowed.includes(file.type)){showError('Unsupported format. Please use PDF, PNG, JPG, WEBP, or GIF.');return}
-      if(file.type === 'application/pdf' && file.size > 4.5 * 1024 * 1024){
-        showError('PDF files must be under 4.5MB for Vercel functions.');
+      if(file.type === 'application/pdf' && file.size > 25 * 1024 * 1024){
+        showError('Files must be under 25MB.');
         return;
       }
       selectedFile=file;
