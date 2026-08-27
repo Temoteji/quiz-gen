@@ -1,4 +1,3 @@
-require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const cookieParser = require('cookie-parser');
@@ -6,6 +5,7 @@ const jwt = require('jsonwebtoken');
 const multer = require('multer');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const { createClient } = require('@libsql/client');
+const path = require('path');
 
 const app = express();
 
@@ -16,22 +16,20 @@ const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
 const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET;
 const BASE_URL = process.env.BASE_URL || 'https://quiz-gen-topaz.vercel.app';
 
-// Database Client
+// Database Client (Turso / libSQL). 
 const db = createClient({
   url: process.env.TURSO_DATABASE_URL || 'file:local.db',
   authToken: process.env.TURSO_AUTH_TOKEN
 });
 
-// Database Initialization with Schema Patch for the missing 'picture' column
 let dbReady = db.execute(`
   CREATE TABLE IF NOT EXISTS users (
     id TEXT PRIMARY KEY,
     name TEXT,
-    email TEXT
+    email TEXT,
+    picture TEXT
   )
-`)
-.then(() => db.execute(`ALTER TABLE users ADD COLUMN picture TEXT`).catch(() => {}))
-.then(() => db.execute(`
+`).then(() => db.execute(`
   CREATE TABLE IF NOT EXISTS quizzes (
     id TEXT PRIMARY KEY,
     user_id TEXT,
@@ -39,8 +37,7 @@ let dbReady = db.execute(`
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY(user_id) REFERENCES users(id)
   )
-`))
-.then(() => db.execute(`
+`)).then(() => db.execute(`
   CREATE TABLE IF NOT EXISTS scores (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id TEXT,
@@ -48,8 +45,7 @@ let dbReady = db.execute(`
     correct_answers INTEGER,
     FOREIGN KEY(user_id) REFERENCES users(id)
   )
-`))
-.catch(err => console.error('DB init error:', err));
+`)).catch(err => console.error('DB init error:', err));
 
 // Ensure tables exist before handling any request
 app.use(async (req, res, next) => {
@@ -67,10 +63,14 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use(cookieParser());
 app.use(cors({ origin: true, credentials: true }));
 
+// Serve static files (Assuming your assets/HTML are in the root or a public folder)
+app.use(express.static(path.join(__dirname)));
+app.use(express.static(path.join(__dirname, 'public'))); 
+
 // In-Memory Storage for File Uploads
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 10 * 1024 * 1024 }
+  limits: { fileSize: 10 * 1024 * 1024 } // 10MB limit
 });
 
 // Initialize Gemini AI client
@@ -82,55 +82,62 @@ const genAI = GEMINI_API_KEY ? new GoogleGenerativeAI(GEMINI_API_KEY) : null;
 
 // Auth Middleware
 function authenticateToken(req, res, next) {
-  const token = req.cookies.qf_session || (req.headers.authorization && req.headers.authorization.split(' ')[1]);
-  
-  if (!token) {
-    return res.status(401).json({ error: 'Unauthorized: No token provided.' });
-  }
+  const token = req.cookies.token || (req.headers.authorization && req.headers.authorization.split(' ')[1]);
+  if (!token) return res.status(401).json({ error: 'Unauthorized' });
 
   jwt.verify(token, JWT_SECRET, (err, user) => {
-    if (err) {
-      res.clearCookie('qf_session', { path: '/' }); 
-      return res.status(401).json({ error: `Invalid session: ${err.message}` });
-    }
+    if (err) return res.status(401).json({ error: 'Invalid or expired session' });
     req.user = user;
     next();
   });
 }
 
-// AI Call Helper
+// AI Call Helper with Exponential Backoff Retry Logic
 async function generateQuizWithRetry(prompt, fileBuffer = null, mimeType = null, retries = 3) {
-  if (!genAI) throw new Error('GEMINI_API_KEY is not configured on the server.');
+  if (!genAI) {
+    throw new Error('GEMINI_API_KEY is not configured on the server.');
+  }
 
   const model = genAI.getGenerativeModel({ 
-    model: 'gemini-3.6-flash',
-    generationConfig: { responseMimeType: 'application/json' },
-    systemInstruction: `
-      You are an expert academic quiz generator.
-      Generate a JSON array of exactly 10 multiple-choice questions based on the provided material.
-      Each item must strictly follow this structure:
-      {
-        "question": "Clear and challenging question text",
-        "options": ["Option A", "Option B", "Option C", "Option D"],
-        "correctIndex": 0,
-        "explanation": "Detailed explanation of why this answer is correct."
-      }
-      Ensure options are distinct and correctIndex is an integer from 0 to 3.
-    `
+    model: 'gemini-1.5-flash',
+    generationConfig: { responseMimeType: 'application/json' }
   });
+
+  const systemInstruction = `
+    You are an expert academic quiz generator.
+    Generate a JSON array of exactly 10 multiple-choice questions based on the provided material.
+    Each item must strictly follow this structure:
+    {
+      "question": "Clear and challenging question text",
+      "options": ["Option A", "Option B", "Option C", "Option D"],
+      "correctIndex": 0,
+      "explanation": "Detailed explanation of why this answer is correct."
+    }
+    Ensure options are distinct and correctIndex is an integer from 0 to 3.
+  `;
 
   let lastError;
   for (let attempt = 1; attempt <= retries; attempt++) {
     try {
-      const parts = [{ text: prompt }];
+      let contents = [];
       if (fileBuffer && mimeType) {
-        parts.push({
-          inlineData: { data: fileBuffer.toString('base64'), mimeType: mimeType }
-        });
+        contents = [
+          systemInstruction,
+          prompt,
+          {
+            inlineData: {
+              data: fileBuffer.toString('base64'),
+              mimeType
+            }
+          }
+        ];
+      } else {
+        contents = [systemInstruction, prompt];
       }
 
-      const result = await model.generateContent(parts);
-      const cleanedJson = result.response.text().replace(/```json|```/g, '').trim();
+      const result = await model.generateContent(contents);
+      const responseText = result.response.text();
+      const cleanedJson = responseText.replace(/```json|```/g, '').trim();
       
       const parsedQuiz = JSON.parse(cleanedJson);
       if (!Array.isArray(parsedQuiz) || parsedQuiz.length === 0) {
@@ -139,8 +146,10 @@ async function generateQuizWithRetry(prompt, fileBuffer = null, mimeType = null,
       return parsedQuiz;
     } catch (err) {
       lastError = err;
-      console.error(`Gemini Attempt ${attempt} failed:`, err.message);
-      if (attempt < retries) await new Promise(resolve => setTimeout(resolve, attempt * 1500));
+      console.warn(`Gemini generation attempt ${attempt} failed: ${err.message}`);
+      if (attempt < retries) {
+        await new Promise(resolve => setTimeout(resolve, attempt * 1500));
+      }
     }
   }
   throw lastError;
@@ -187,39 +196,26 @@ app.get('/auth/google/callback', async (req, res) => {
     const userRes = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', {
       headers: { Authorization: `Bearer ${tokenData.access_token}` }
     });
-    
     const profile = await userRes.json();
-    
-    // Safely grab the ID whether Google sends 'id' or 'sub'
-    const userId = profile.id || profile.sub;
-
-    if (!userId) throw new Error('Failed to retrieve user ID from Google.');
 
     const userData = {
-      id: String(userId),
-      name: profile.name || 'User',
-      email: profile.email || '',
-      picture: profile.picture || ''
+      id: profile.id,
+      name: profile.name,
+      email: profile.email,
+      picture: profile.picture
     };
 
-    // Save to DB
     await db.execute({
       sql: `INSERT INTO users (id, name, email, picture) VALUES (?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET name = excluded.name, email = excluded.email, picture = excluded.picture`,
       args: [userData.id, userData.name, userData.email, userData.picture]
     });
 
-    // Generate JWT
     const token = jwt.sign(userData, JWT_SECRET, { expiresIn: '24h' });
 
-    // Clean slate
-    res.clearCookie('token', { path: '/' });
-    res.clearCookie('qf_session', { path: '/' });
-
-    // Set bulletproof cookie
-    res.cookie('qf_session', token, {
+    res.cookie('token', token, {
       httpOnly: true,
-      secure: true, 
+      secure: process.env.NODE_ENV === 'production',
       sameSite: 'lax',
       path: '/',
       maxAge: 24 * 60 * 60 * 1000
@@ -228,13 +224,12 @@ app.get('/auth/google/callback', async (req, res) => {
     res.redirect('/');
   } catch (err) {
     console.error('OAuth Callback Error:', err);
-    res.redirect(`/?error=${encodeURIComponent(err.message)}`);
+    res.redirect('/?error=AuthFailed');
   }
 });
 
 // Logout
 app.get('/logout', (req, res) => {
-  res.clearCookie('qf_session', { path: '/' });
   res.clearCookie('token', { path: '/' });
   res.redirect('/');
 });
@@ -242,11 +237,12 @@ app.get('/logout', (req, res) => {
 // Get Current Authenticated User Profile
 app.get('/api/me', authenticateToken, async (req, res) => {
   try {
+    const userId = req.user.id;
     const result = await db.execute({
       sql: `SELECT COALESCE(SUM(questions_answered), 0) AS total_answered,
                    COALESCE(SUM(correct_answers), 0) AS correct_answered
             FROM scores WHERE user_id = ?`,
-      args: [req.user.id]
+      args: [userId]
     });
 
     const row = result.rows[0] || { total_answered: 0, correct_answered: 0 };
@@ -275,17 +271,19 @@ app.get('/api/me', authenticateToken, async (req, res) => {
 // Get All Quizzes for Logged-In User
 app.get('/api/quizzes', authenticateToken, async (req, res) => {
   try {
+    const userId = req.user.id;
+
     const quizzesResult = await db.execute({
       sql: `SELECT id, user_id, quiz_data, created_at FROM quizzes
             WHERE user_id = ? ORDER BY created_at DESC`,
-      args: [req.user.id]
+      args: [userId]
     });
 
     const statsResult = await db.execute({
       sql: `SELECT COALESCE(SUM(questions_answered), 0) AS total_answered,
                    COALESCE(SUM(correct_answers), 0) AS correct_answered
             FROM scores WHERE user_id = ?`,
-      args: [req.user.id]
+      args: [userId]
     });
 
     const statsRow = statsResult.rows[0] || { total_answered: 0, correct_answered: 0 };
@@ -319,13 +317,15 @@ app.post('/api/generate-quiz', authenticateToken, async (req, res) => {
     res.json({ quiz: quizData });
   } catch (err) {
     console.error('Quiz Generation Error:', err);
-    res.status(500).json({ error: `AI Error: ${err.message}` });
+    res.status(500).json({ error: 'The AI service failed to respond. Please try again shortly.' });
   }
 });
 
 // Generate Quiz from Uploaded File (Image/PDF)
 app.post('/api/generate-quiz-file', authenticateToken, upload.single('file'), async (req, res) => {
-  if (!req.file) return res.status(400).json({ error: 'No file uploaded.' });
+  if (!req.file) {
+    return res.status(400).json({ error: 'No file uploaded.' });
+  }
 
   try {
     const prompt = 'Extract the key educational topics from this uploaded document and generate a 10-question quiz.';
@@ -339,7 +339,7 @@ app.post('/api/generate-quiz-file', authenticateToken, upload.single('file'), as
     res.json({ quiz: quizData });
   } catch (err) {
     console.error('File Quiz Generation Error:', err);
-    res.status(500).json({ error: `AI Error: ${err.message}` });
+    res.status(500).json({ error: 'The AI service failed to process the file. Please try again.' });
   }
 });
 
@@ -347,17 +347,18 @@ app.post('/api/generate-quiz-file', authenticateToken, upload.single('file'), as
 app.post('/api/save-score', authenticateToken, async (req, res) => {
   try {
     const { answered, correct } = req.body;
-    
+    const userId = req.user.id;
+
     await db.execute({
       sql: `INSERT INTO scores (user_id, questions_answered, correct_answers) VALUES (?, ?, ?)`,
-      args: [req.user.id, Number(answered) || 0, Number(correct) || 0]
+      args: [userId, Number(answered) || 0, Number(correct) || 0]
     });
 
     const statsResult = await db.execute({
       sql: `SELECT COALESCE(SUM(questions_answered), 0) AS total_answered,
                    COALESCE(SUM(correct_answers), 0) AS correct_answered
             FROM scores WHERE user_id = ?`,
-      args: [req.user.id]
+      args: [userId]
     });
 
     const row = statsResult.rows[0] || { total_answered: 0, correct_answered: 0 };
@@ -374,19 +375,19 @@ app.post('/api/save-score', authenticateToken, async (req, res) => {
   }
 });
 
+// Serve the frontend for the root route
+app.get('/', (req, res) => {
+  res.sendFile(path.join(__dirname, 'index.html'));
+});
+
 // Global Error Handler
 app.use((err, req, res, next) => {
   console.error('Unhandled Error:', err);
   res.status(500).json({ error: err.message || 'Internal Server Error' });
 });
 
-// Export for Vercel Serverless Function
-module.exports = app;
-
-// Local Development Guard
-if (require.main === module) {
-  const PORT = process.env.PORT || 3000;
-  app.listen(PORT, () => {
-    console.log(`Server listening at http://localhost:${PORT}`);
-  });
-}
+// Start the server (No Vercel check needed for Render)
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log(`Server listening on port ${PORT}`);
+});
