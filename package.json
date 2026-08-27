@@ -2,10 +2,10 @@
   "name": "notes-to-quiz",
   "version": "1.0.0",
   "description": "AI-powered study tool with a Stripe paywall: paste notes, get 3 free quizzes, then pay for unlimited.",
-  "main": "server.js",
+  "main": "api/server.js",
   "type": "commonjs",
   "scripts": {
-    "start": "node server.js"
+    "start": "node api/server.js"
   },
   "engines": {
     "node": ">=18"
