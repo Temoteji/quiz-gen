@@ -542,6 +542,17 @@
       }
     });
 
+    // Global delegation for opening library card quiz review modals safely
+    document.addEventListener('click', (e) => {
+      const libraryItem = e.target.closest('.library-card-item');
+      if (libraryItem) {
+        const encodedQuiz = libraryItem.getAttribute('data-quiz');
+        const title = libraryItem.getAttribute('data-title');
+        const dateStr = libraryItem.getAttribute('data-date');
+        showQuizDetails(encodedQuiz, title, dateStr);
+      }
+    });
+
     const navItems=document.querySelectorAll('.nav-item');
     const pageViews=document.querySelectorAll('.page-view');
 
@@ -721,7 +732,7 @@
         const encodedQuiz = encodeURIComponent(JSON.stringify(parsedQuiz));
 
         return `
-          <div class="library-item" onclick="showQuizDetails('${encodedQuiz}', 'Study Set #${items.length - i}', '${dateStr}')">
+          <div class="library-item library-card-item" data-quiz="${encodedQuiz}" data-title="Study Set #${items.length - i}" data-date="${dateStr}">
             <div class="folder">📝</div>
             <div>
               <strong>Study Set #${items.length - i}</strong>
