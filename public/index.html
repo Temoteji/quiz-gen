@@ -583,57 +583,21 @@
     const viewAllBtn = document.getElementById('viewAllBtn');
     const closeModalBtn = document.getElementById('closeModalBtn');
 
-    async function openQuizModal() {
-      try {
-        const res = await fetch('/api/quizzes');
-        const data = await res.json();
-        const listContainer = document.getElementById('modalQuizList');
-        listContainer.innerHTML = '';
-        
-        if (data.quizzes && data.quizzes.length > 0) {
-          data.quizzes.forEach((item, index) => {
-            const questions = typeof item.quiz_data === 'string' ? JSON.parse(item.quiz_data) : (item.quiz_data || []);
-            const dateStr = new Date(item.created_at).toLocaleDateString();
-            
-            let questionsHtml = questions.map((q, qIdx) => {
-              let optionsList = q.options.map((opt, oIdx) => {
-                const isCorrect = oIdx === q.correctIndex;
-                const style = isCorrect ? 'background: #eef6ec; border-color: #b8d1b3; font-weight: 600; color: #345831;' : 'background: var(--white);';
-                return `<div style="padding: 6px 10px; margin-top: 4px; border: 1px solid var(--line); border-radius: 6px; font-size: 11px; ${style}">
-                  ${String.fromCharCode(65 + oIdx)}. ${opt} ${isCorrect ? '✓ <strong>(Correct Answer)</strong>' : ''}
-                </div>`;
-              }).join('');
-
-              return `
-                <div style="margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--line);">
-                  <div style="font-weight: 600; font-size: 12px; margin-bottom: 4px;">Q${qIdx + 1}: ${q.question}</div>
-                  <div>${optionsList}</div>
-                  <div style="font-size: 11px; color: var(--muted); margin-top: 6px;"><em>Explanation:</em> ${q.explanation || 'None provided.'}</div>
-                </div>`;
-            }).join('');
-
-            const html = `
-              <div style="border: 1px solid var(--line); border-radius: 8px; padding: 14px; background: var(--paper); margin-bottom: 12px;">
-                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; border-bottom: 1px solid var(--line); padding-bottom: 6px;">
-                  <span style="font-weight: 700; color: var(--coral); font-size: 13px;">Study Set #${data.quizzes.length - index} (${dateStr})</span>
-                  <span style="font-size: 11px; color: var(--muted);">${questions.length} Questions</span>
-                </div>
-                <div>${questionsHtml}</div>
-              </div>`;
-            listContainer.insertAdjacentHTML('beforeend', html);
-          });
-        } else {
-          listContainer.innerHTML = '<p style="color: var(--muted); font-size: 12px; text-align: center; padding: 20px;">No saved study sets found.</p>';
-        }
-      } catch (err) {
-        document.getElementById('modalQuizList').innerHTML = '<p style="color: var(--muted); font-size: 12px; text-align: center; padding: 20px;">Failed to load saved sets.</p>';
-      }
-    }
-
     if (viewAllBtn) {
       viewAllBtn.onclick = () => {
-        quizModal.style.display = 'flex';
-        openQuizModal();
+        pageViews.forEach(page => {
+          if (page.id === 'pageLibrary') {
+            page.classList.add('active-page');
+          } else {
+            page.classList.remove('active-page');
+          }
+        });
+
+        navItems.forEach(navItem => {
+          navItem.classList.toggle('active', navItem.getAttribute('data-target') === 'pageLibrary');
+        });
+
+        window.scrollTo({ top: 0, behavior: 'smooth' });
       };
     }
 
