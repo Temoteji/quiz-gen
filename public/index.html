@@ -403,8 +403,8 @@
         
         // Compress image before sending
         const fileToSend = await compressImage(selectedFile);
-        if (fileToSend.size > 4.5 * 1024 * 1024) {
-          showError('File is too large for serverless upload (max 4.5MB). Please upload a smaller file.');
+        if (fileToSend.size > 25 * 1024 * 1024) {
+          showError('File is too large for serverless upload (max 25MB). Please upload a smaller file.');
           return;
         }
 
