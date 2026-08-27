@@ -62,7 +62,8 @@
     .primary:active{transform:translateY(2px);box-shadow:0 2px 0 #bf513c}
     .primary:disabled{opacity:.55;cursor:wait}
     .library-list{padding:7px 20px 15px}
-    .library-item{display:flex;gap:11px;align-items:center;padding:14px 0;border-bottom:1px solid #ebe7dd}
+    .library-item{display:flex;gap:11px;align-items:center;padding:14px 0;border-bottom:1px solid #ebe7dd;cursor:pointer;transition:background 0.15s;border-radius:6px}
+    .library-item:hover{background:#f3f0e8;padding-left:6px;padding-right:6px}
     .library-item:last-child{border:0}
     .folder{width:34px;height:34px;display:grid;place-items:center;background:#f5e2c3;border-radius:7px;font-size:16px}
     .library-item strong{display:block;font-size:12px;margin-bottom:4px}
@@ -299,7 +300,7 @@
             <div class="eyebrow" style="margin-bottom:8px">Archive</div>
             <h1 style="font-size: 42px;">My Library</h1>
           </div>
-          <p class="welcome-copy">All of your generated study sets and past review items in one place.</p>
+          <p class="welcome-copy">All of your generated study sets and past review items in one place. Click any set to review it.</p>
         </section>
 
         <section class="panel">
@@ -329,7 +330,6 @@
 
     function switchMode(nextMode){mode=nextMode;tabText.classList.toggle('active',mode==='text');tabFile.classList.toggle('active',mode==='file');panelText.style.display=mode==='text'?'block':'none';panelFile.style.display=mode==='file'?'block':'none';errorContainer.style.display='none'}tabText.onclick=()=>switchMode('text');tabFile.onclick=()=>switchMode('file');dropZone.onclick=()=>fileInput.click();dropZone.ondragover=e=>{e.preventDefault();dropZone.classList.add('drag-over')};dropZone.ondragleave=()=>dropZone.classList.remove('drag-over');dropZone.ondrop=e=>{e.preventDefault();dropZone.classList.remove('drag-over');if(e.dataTransfer.files[0])handleFileSelect(e.dataTransfer.files[0])};fileInput.onchange=e=>{if(e.target.files[0])handleFileSelect(e.target.files[0])};
     
-    // Client-side image compressor: shrink large images to under 1MB
     async function compressImage(file) {
       if (!file.type.startsWith('image/')) return file;
       return new Promise((resolve) => {
@@ -339,7 +339,7 @@
           img.onload = () => {
             const canvas = document.createElement('canvas');
             let { width, height } = img;
-            const maxDimension = 1800; // Crisp enough for AI reading
+            const maxDimension = 1800;
             if (width > maxDimension || height > maxDimension) {
               if (width > height) {
                 height = Math.round((height * maxDimension) / width);
@@ -401,7 +401,6 @@
       }else{
         if(!selectedFile){showError('Select or drop a file first.');return}
         
-        // Compress image before sending
         const fileToSend = await compressImage(selectedFile);
         if (fileToSend.size > 25 * 1024 * 1024) {
           showError('File is too large (max 25MB). Please upload a smaller file.');
@@ -429,19 +428,8 @@
         }
 
         if(!response.ok) throw new Error(data.error||'Something went wrong.');
-        quiz=data.quiz;
-        current=0;
-        score=0;
-        answered=0;
         
-        document.querySelectorAll('.page-view').forEach(p => p.classList.remove('active-page'));
-        document.getElementById('pageGenerate').classList.add('active-page');
-
-        generatorPanel.style.display='none';
-        quizCard.style.display='block';
-        doneCard.style.display='none';
-        renderQuestion();
-        quizCard.scrollIntoView({behavior:'smooth',block:'start'});
+        loadQuizIntoPlayer(data.quiz);
       }catch(error){
         showError(error.message||'Failed to generate quiz. Please try again.');
       }finally{
@@ -449,6 +437,27 @@
         statusEl.style.display='none';
         loadDashboard();
       }
+    }
+
+    function loadQuizIntoPlayer(quizArray) {
+      quiz=quizArray;
+      current=0;
+      score=0;
+      answered=0;
+      
+      document.querySelectorAll('.page-view').forEach(p => p.classList.remove('active-page'));
+      document.getElementById('pageGenerate').classList.add('active-page');
+
+      // Highlight the generate tab in sidebar while playing
+      navItems.forEach(navItem => {
+        navItem.classList.toggle('active', navItem.getAttribute('data-target') === 'pageGenerate');
+      });
+
+      generatorPanel.style.display='none';
+      quizCard.style.display='block';
+      doneCard.style.display='none';
+      renderQuestion();
+      quizCard.scrollIntoView({behavior:'smooth',block:'start'});
     }
     
     function renderQuestion(){
@@ -638,7 +647,6 @@
           document.getElementById('appRoot').classList.add('logged-in');
           document.getElementById('profileContainer').style.display = 'block';
 
-          // Only force overview if we aren't currently viewing an active quiz generation
           if (quizCard.style.display !== 'block' && doneCard.style.display !== 'block') {
             document.querySelectorAll('.page-view').forEach(p => p.classList.remove('active-page'));
             document.getElementById('pageOverview').classList.add('active-page');
@@ -705,21 +713,38 @@
       const generateItemsHtml = (items) => items.map((q, i) => {
         const dateStr = new Date(q.created_at).toLocaleDateString();
         let qCount = 0;
+        let parsedQuiz = [];
         try { 
-          qCount = (typeof q.quiz_data === 'string' ? JSON.parse(q.quiz_data) : (q.quiz_data || [])).length; 
+          parsedQuiz = typeof q.quiz_data === 'string' ? JSON.parse(q.quiz_data) : (q.quiz_data || []);
+          qCount = parsedQuiz.length; 
         } catch(e){}
+
+        // Store serialized JSON to bind click behavior safely
+        const encodedQuiz = encodeURIComponent(JSON.stringify(parsedQuiz));
+
         return `
-          <div class="library-item">
+          <div class="library-item" onclick="launchReview('${encodedQuiz}')">
             <div class="folder">📝</div>
             <div>
               <strong>Study Set #${items.length - i}</strong>
-              <span>${qCount} Questions • ${dateStr}</span>
+              <span>${qCount} Questions • ${dateStr} (Click to review)</span>
             </div>
           </div>`;
       }).join('');
 
       if (overviewList) overviewList.innerHTML = generateItemsHtml(quizzes.slice(0, 3));
-      if (fullList) fullList.innerHTML = generateItemsHtml(quizzes);
+      if (fullList) overviewList.innerHTML = generateItemsHtml(quizzes);
+    }
+
+    function launchReview(encodedQuiz) {
+      try {
+        const quizArray = JSON.parse(decodeURIComponent(encodedQuiz));
+        if (quizArray && quizArray.length > 0) {
+          loadQuizIntoPlayer(quizArray);
+        }
+      } catch (err) {
+        console.error("Failed to load quiz for review:", err);
+      }
     }
 
     document.addEventListener('DOMContentLoaded', loadDashboard);
