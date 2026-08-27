@@ -58,8 +58,8 @@ app.use(async (req, res, next) => {
 });
 
 // Middleware
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+app.use(express.json({ limit: '25mb' }));
+app.use(express.urlencoded({ extended: true, limit: '25mb' }));
 app.use(cookieParser());
 app.use(cors({ origin: true, credentials: true }));
 
@@ -70,7 +70,7 @@ app.use(express.static(path.join(__dirname, 'public')));
 // In-Memory Storage for File Uploads
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 10 * 1024 * 1024 } // 10MB limit
+  limits: { fileSize: 25 * 1024 * 1024 } // 10MB limit
 });
 
 // Initialize Gemini AI client
