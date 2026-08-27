@@ -62,8 +62,7 @@
     .primary:active{transform:translateY(2px);box-shadow:0 2px 0 #bf513c}
     .primary:disabled{opacity:.55;cursor:wait}
     .library-list{padding:7px 20px 15px}
-    .library-item{display:flex;gap:11px;align-items:center;padding:14px 0;border-bottom:1px solid #ebe7dd;cursor:pointer;transition:background 0.15s;border-radius:6px}
-    .library-item:hover{background:#f3f0e8;padding-left:6px;padding-right:6px}
+    .library-item{display:flex;gap:11px;align-items:center;padding:14px 0;border-bottom:1px solid #ebe7dd}
     .library-item:last-child{border:0}
     .folder{width:34px;height:34px;display:grid;place-items:center;background:#f5e2c3;border-radius:7px;font-size:16px}
     .library-item strong{display:block;font-size:12px;margin-bottom:4px}
@@ -91,10 +90,8 @@
     .done h2{font:400 40px 'Instrument Serif',serif;margin-bottom:8px}
     .done p{color:var(--muted);font-size:13px;margin-bottom:22px}
     
-    /* BURGER TOGGLE BUTTON - mobile only */
     .burger-btn { display: none; background: transparent; border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; font-size: 14px; align-items: center; gap: 6px; color: var(--ink); font-weight: 600; }
 
-    /* PROFILE DROPDOWN CSS */
     .profile-container{position:relative;display:none;text-align:center}
     .profile-dropdown{display:none;position:absolute;top:110%;right:0;background:var(--white);border:1px solid var(--line);border-radius:10px;width:240px;box-shadow:0 4px 12px rgba(32,34,31,0.06);z-index:100;overflow:hidden;text-align:left}
     .profile-dropdown.show{display:block}
@@ -108,7 +105,6 @@
     .dropdown-footer a{display:block;padding:10px 12px;color:var(--coral);text-decoration:none;font-size:13px;font-weight:600;border-radius:6px;transition:background 0.15s}
     .dropdown-footer a:hover{background:#fff5f1}
     
-    /* PAGE SWITCHER CSS */
     .page-view { display: none; }
     .page-view.active-page { display: block; }
 
@@ -143,8 +139,6 @@
     }
     .nav-item{min-height:40px}
     .nav-icon{width:48px;min-width:48px;flex:none;white-space:nowrap;font-size:11px;color:var(--coral)}
-
-    /* LOADING OVERLAY */
     #loadingOverlay{position:fixed;inset:0;background:var(--paper);z-index:9999;display:flex;align-items:center;justify-content:center}
   </style>
 </head>
@@ -189,7 +183,7 @@
         </div>
       </div>
       
-      <!-- PAGE 0: LANDING / LOGIN PAGE (DEFAULT UNAUTHENTICATED) -->
+      <!-- PAGE 0: LANDING / LOGIN PAGE -->
       <div id="pageLanding" class="page-view active-page" style="width: 100%; max-width: 900px; margin: 0 auto; text-align: center;">
         <section class="welcome" style="display: flex; flex-direction: column; align-items: center; gap: 20px; padding: 40px 0; width: 100%;">
           <div>
@@ -258,7 +252,7 @@
                 <div id="panelFile" style="display:none">
                   <div class="dropzone" id="dropZone">
                     <input type="file" id="fileInput" hidden accept="image/jpeg,image/png,image/webp,image/gif,application/pdf" />
-                    <div><div class="drop-icon">upload</div><strong>Drop your notes here</strong><br /><span>PDF, PNG, JPG, WEBP or GIF - max 10MB</span></div>
+                    <div><div class="drop-icon">upload</div><strong>Drop your notes here</strong><br /><span>PDF, PNG, JPG, WEBP or GIF (Auto-compressed)</span></div>
                   </div>
                   <div id="fileChip" class="file-chip" style="display:none">
                     <span id="fileName"></span><button type="button" class="remove" id="removeFileBtn" title="Remove file">x</button>
@@ -330,24 +324,131 @@
   <script>
     const notesInput=document.getElementById('notesInput'),generateBtn=document.getElementById('generateBtn'),tabText=document.getElementById('tabText'),tabFile=document.getElementById('tabFile'),panelText=document.getElementById('panelText'),panelFile=document.getElementById('panelFile'),dropZone=document.getElementById('dropZone'),fileInput=document.getElementById('fileInput'),fileChip=document.getElementById('fileChip'),fileName=document.getElementById('fileName'),filePreview=document.getElementById('filePreview'),removeFileBtn=document.getElementById('removeFileBtn'),statusEl=document.getElementById('status'),errorContainer=document.getElementById('errorMsg'),errorText=errorContainer.querySelector('span'),generatorPanel=document.getElementById('generatorPanel'),quizCard=document.getElementById('quizCard'),doneCard=document.getElementById('doneCard'),qnum=document.getElementById('qnum'),qtext=document.getElementById('qtext'),optionsWrap=document.getElementById('optionsWrap'),explainContainer=document.getElementById('explain'),explainText=document.getElementById('explainText'),nextBtn=document.getElementById('nextBtn'),scoreLabel=document.getElementById('scoreLabel'),restartBtn=document.getElementById('restartBtn');let mode='text',selectedFile=null,quiz=[],current=0,score=0,answered=0;
     
-    let globalQuizzes = [];
-
     const dateOptions = { weekday: 'long', month: 'long', day: 'numeric' };
     document.querySelector('.date-header').textContent = new Date().toLocaleDateString('en-US', dateOptions);
 
     function switchMode(nextMode){mode=nextMode;tabText.classList.toggle('active',mode==='text');tabFile.classList.toggle('active',mode==='file');panelText.style.display=mode==='text'?'block':'none';panelFile.style.display=mode==='file'?'block':'none';errorContainer.style.display='none'}tabText.onclick=()=>switchMode('text');tabFile.onclick=()=>switchMode('file');dropZone.onclick=()=>fileInput.click();dropZone.ondragover=e=>{e.preventDefault();dropZone.classList.add('drag-over')};dropZone.ondragleave=()=>dropZone.classList.remove('drag-over');dropZone.ondrop=e=>{e.preventDefault();dropZone.classList.remove('drag-over');if(e.dataTransfer.files[0])handleFileSelect(e.dataTransfer.files[0])};fileInput.onchange=e=>{if(e.target.files[0])handleFileSelect(e.target.files[0])};
-    function handleFileSelect(file){const allowed=['image/jpeg','image/png','image/webp','image/gif','application/pdf'];if(!allowed.includes(file.type)){showError('Unsupported file format. Please use PDF, PNG, JPG, WEBP, or GIF.');return}if(file.size>10485760){showError('File exceeds the 10MB limit.');return}selectedFile=file;errorContainer.style.display='none';fileName.textContent=file.name;fileChip.style.display='flex';dropZone.style.display='none';if(file.type.startsWith('image/')){const reader=new FileReader();reader.onload=e=>{filePreview.src=e.target.result;filePreview.style.display='block'};reader.readAsDataURL(file)}}function clearFile(){selectedFile=null;fileInput.value='';fileChip.style.display='none';filePreview.style.display='none';filePreview.src='';dropZone.style.display='grid'}removeFileBtn.onclick=clearFile;function showError(message){errorText.textContent=message;errorContainer.style.display='block'}
     
-    generateBtn.onclick=generateQuiz;async function generateQuiz(){errorContainer.style.display='none';let fetchPromise;if(mode==='text'){const notes=notesInput.value.trim();if(notes.length<30){showError('Add at least 30 characters of notes to build a quiz.');return}fetchPromise=fetch('/api/generate-quiz',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({notes})})}else{if(!selectedFile){showError('Select or drop a file first.');return}const formData=new FormData();formData.append('file',selectedFile);fetchPromise=fetch('/api/generate-quiz-file',{method:'POST',body:formData})}generateBtn.disabled=true;statusEl.style.display='flex';try{const response=await fetchPromise;const data=await response.json();if(!response.ok)throw new Error(data.error||'Something went wrong.');quiz=data.quiz;current=0;score=0;answered=0;
-      
-      document.querySelectorAll('.page-view').forEach(p => p.classList.remove('active-page'));
-      document.getElementById('pageGenerate').classList.add('active-page');
-
-      navItems.forEach(navItem => {
-        navItem.classList.toggle('active', navItem.getAttribute('data-target') === 'pageGenerate');
+    // Client-side image compressor: shrink large images to under 1MB
+    async function compressImage(file) {
+      if (!file.type.startsWith('image/')) return file;
+      return new Promise((resolve) => {
+        const img = new Image();
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          img.onload = () => {
+            const canvas = document.createElement('canvas');
+            let { width, height } = img;
+            const maxDimension = 1800; // Crisp enough for AI reading
+            if (width > maxDimension || height > maxDimension) {
+              if (width > height) {
+                height = Math.round((height * maxDimension) / width);
+                width = maxDimension;
+              } else {
+                width = Math.round((width * maxDimension) / height);
+                height = maxDimension;
+              }
+            }
+            canvas.width = width;
+            canvas.height = height;
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(img, 0, 0, width, height);
+            canvas.toBlob((blob) => {
+              if (blob) {
+                resolve(new File([blob], file.name.replace(/\.[^/.]+$/, ".jpg"), { type: 'image/jpeg' }));
+              } else {
+                resolve(file);
+              }
+            }, 'image/jpeg', 0.8);
+          };
+          img.src = e.target.result;
+        };
+        reader.readAsDataURL(file);
       });
+    }
 
-      generatorPanel.style.display='none';quizCard.style.display='block';renderQuestion();quizCard.scrollIntoView({behavior:'smooth',block:'start'})}catch(error){showError(error.message||'Failed to generate quiz. Please try again.')}finally{generateBtn.disabled=false;statusEl.style.display='none';loadDashboard()}}
+    function handleFileSelect(file){
+      const allowed=['image/jpeg','image/png','image/webp','image/gif','application/pdf'];
+      if(!allowed.includes(file.type)){showError('Unsupported format. Please use PDF, PNG, JPG, WEBP, or GIF.');return}
+      if(file.type === 'application/pdf' && file.size > 4.5 * 1024 * 1024){
+        showError('PDF files must be under 4.5MB for Vercel functions.');
+        return;
+      }
+      selectedFile=file;
+      errorContainer.style.display='none';
+      fileName.textContent=file.name;
+      fileChip.style.display='flex';
+      dropZone.style.display='none';
+      if(file.type.startsWith('image/')){
+        const reader=new FileReader();
+        reader.onload=e=>{filePreview.src=e.target.result;filePreview.style.display='block'};
+        reader.readAsDataURL(file);
+      }
+    }
+    
+    function clearFile(){selectedFile=null;fileInput.value='';fileChip.style.display='none';filePreview.style.display='none';filePreview.src='';dropZone.style.display='grid'}
+    removeFileBtn.onclick=clearFile;
+    function showError(message){errorText.textContent=message;errorContainer.style.display='block'}
+    
+    generateBtn.onclick=generateQuiz;
+    async function generateQuiz(){
+      errorContainer.style.display='none';
+      let fetchPromise;
+      if(mode==='text'){
+        const notes=notesInput.value.trim();
+        if(notes.length<30){showError('Add at least 30 characters of notes to build a quiz.');return}
+        fetchPromise=fetch('/api/generate-quiz',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({notes})});
+      }else{
+        if(!selectedFile){showError('Select or drop a file first.');return}
+        
+        // Compress image before sending
+        const fileToSend = await compressImage(selectedFile);
+        if (fileToSend.size > 4.5 * 1024 * 1024) {
+          showError('File is too large for serverless upload (max 4.5MB). Please upload a smaller file.');
+          return;
+        }
+
+        const formData=new FormData();
+        formData.append('file',fileToSend);
+        fetchPromise=fetch('/api/generate-quiz-file',{method:'POST',body:formData});
+      }
+      
+      generateBtn.disabled=true;
+      statusEl.style.display='flex';
+      
+      try{
+        const response=await fetchPromise;
+        let data;
+        try {
+          data = await response.json();
+        } catch (jsonErr) {
+          if (response.status === 413) {
+            throw new Error('File payload exceeds the 4.5MB server limit. Please upload a smaller document.');
+          }
+          throw new Error('Server returned an unreadable response (' + response.status + ').');
+        }
+
+        if(!response.ok) throw new Error(data.error||'Something went wrong.');
+        quiz=data.quiz;
+        current=0;
+        score=0;
+        answered=0;
+        
+        document.querySelectorAll('.page-view').forEach(p => p.classList.remove('active-page'));
+        document.getElementById('pageGenerate').classList.add('active-page');
+
+        generatorPanel.style.display='none';
+        quizCard.style.display='block';
+        renderQuestion();
+        quizCard.scrollIntoView({behavior:'smooth',block:'start'});
+      }catch(error){
+        showError(error.message||'Failed to generate quiz. Please try again.');
+      }finally{
+        generateBtn.disabled=false;
+        statusEl.style.display='none';
+        loadDashboard();
+      }
+    }
     
     function renderQuestion(){
       const question=quiz[current];
@@ -363,9 +464,9 @@
         option.className='option-card';
         option.innerHTML=`<span class="letter">${letter}</span><span>${question.options[index]}</span>`;
         option.onclick=()=>selectAnswer(index);
-        optionsWrap.appendChild(option)
+        optionsWrap.appendChild(option);
       });
-      updateScore()
+      updateScore();
     }
 
     function selectAnswer(index){
@@ -380,16 +481,29 @@
         options[question.correctIndex].classList.add('correct');
       }
       answered++;
-      explainText.innerHTML=`<strong>Correct Answer: ${['A','B','C','D'][question.correctIndex]}</strong><br/>${question.explanation||'No explanation provided.'}`;
+      explainText.textContent=question.explanation||'No explanation provided.';
       explainContainer.style.display='block';
       nextBtn.style.display='inline-block';
       nextBtn.textContent=current===quiz.length-1?'Finish quiz ->':'Next question ->';
-      updateScore()
+      updateScore();
     }
 
     function updateScore(){scoreLabel.textContent=`Score: ${score}/${answered}`}
     
-    nextBtn.onclick=showNext;function showNext(){if(current===quiz.length-1){quizCard.style.display='none';doneCard.style.display='block';const percent=Math.round(score/quiz.length*100);document.getElementById('doneText').textContent=`You scored ${score} out of ${quiz.length} - ${percent}%`;doneCard.scrollIntoView({behavior:'smooth',block:'start'});fetch('/api/save-score',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({answered:quiz.length,correct:score})}).then(()=>loadDashboard());}else{current++;renderQuestion()}}
+    nextBtn.onclick=showNext;
+    function showNext(){
+      if(current===quiz.length-1){
+        quizCard.style.display='none';
+        doneCard.style.display='block';
+        const percent=Math.round(score/quiz.length*100);
+        document.getElementById('doneText').textContent=`You scored ${score} out of ${quiz.length} - ${percent}%`;
+        doneCard.scrollIntoView({behavior:'smooth',block:'start'});
+        fetch('/api/save-score',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({answered:quiz.length,correct:score})}).then(()=>loadDashboard());
+      }else{
+        current++;
+        renderQuestion();
+      }
+    }
     
     restartBtn.onclick=resetAll;
     function resetAll(){
@@ -406,7 +520,6 @@
     }
     notesInput.onkeydown=e=>{if((e.metaKey||e.ctrlKey)&&e.key==='Enter'){e.preventDefault();generateBtn.click()}};
     
-    // MOBILE BURGER TOGGLE LOGIC
     const burgerToggle = document.getElementById('burgerToggle');
     const sidebarNav = document.getElementById('sidebarNav');
     burgerToggle.onclick = (e) => {
@@ -450,63 +563,26 @@
     const viewAllBtn = document.getElementById('viewAllBtn');
     const closeModalBtn = document.getElementById('closeModalBtn');
 
-    function loadQuizFromArchive(quizDataJson) {
-      try {
-        const parsed = typeof quizDataJson === 'string' ? JSON.parse(quizDataJson) : quizDataJson;
-        if (!Array.isArray(parsed) || parsed.length === 0) return;
-        quiz = parsed;
-        current = 0;
-        score = 0;
-        answered = 0;
-
-        document.querySelectorAll('.page-view').forEach(p => p.classList.remove('active-page'));
-        document.getElementById('pageGenerate').classList.add('active-page');
-        navItems.forEach(navItem => {
-          navItem.classList.toggle('active', navItem.getAttribute('data-target') === 'pageGenerate');
-        });
-
-        generatorPanel.style.display = 'none';
-        doneCard.style.display = 'none';
-        quizCard.style.display = 'block';
-        renderQuestion();
-        quizCard.scrollIntoView({ behavior: 'smooth', block: 'start' });
-      } catch(e) {
-        console.error('Failed to load archived quiz:', e);
-      }
-    }
-
     async function openQuizModal() {
       try {
         const res = await fetch('/api/quizzes');
         const data = await res.json();
-        globalQuizzes = data.quizzes || [];
         const listContainer = document.getElementById('modalQuizList');
         listContainer.innerHTML = '';
-        if (globalQuizzes.length > 0) {
-          globalQuizzes.forEach((item, index) => {
+        if (data.quizzes && data.quizzes.length > 0) {
+          data.quizzes.forEach((item, index) => {
             const questions = typeof item.quiz_data === 'string' ? JSON.parse(item.quiz_data) : (item.quiz_data || []);
             const dateStr = new Date(item.created_at).toLocaleDateString();
             const html = `
-              <div class="library-item modal-quiz-trigger" data-index="${index}" style="border: 1px solid var(--line); border-radius: 8px; padding: 14px; background: var(--paper); margin-bottom: 8px;">
-                <div class="folder" style="margin-right: 12px; display:inline-grid; vertical-align:middle;">📝</div>
-                <div style="display:inline-block; vertical-align:middle; width: calc(100% - 60px);">
-                  <strong>Study Set #${globalQuizzes.length - index}</strong>
-                  <span>${questions.length} Questions • ${dateStr}</span>
-                  <p style="font-size: 12px; color: var(--ink); margin-top: 4px;">${questions[0]?.question || 'Study Set'}</p>
+              <div style="border: 1px solid var(--line); border-radius: 8px; padding: 14px; background: var(--paper);">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                  <span style="font-weight: 600; color: var(--coral); font-size: 13px;">Set #${data.quizzes.length - index} (${dateStr})</span>
+                  <span style="font-size: 11px; color: var(--muted);">${questions.length} Questions</span>
                 </div>
+                <p style="font-size: 12px; color: var(--ink); line-height: 1.4;">${questions[0]?.question || 'Study Set'}</p>
               </div>`;
             listContainer.insertAdjacentHTML('beforeend', html);
           });
-
-          // Attach click triggers for modal items
-          listContainer.querySelectorAll('.modal-quiz-trigger').forEach(el => {
-            el.onclick = () => {
-              const idx = el.getAttribute('data-index');
-              quizModal.style.display = 'none';
-              loadQuizFromArchive(globalQuizzes[idx].quiz_data);
-            };
-          });
-
         } else {
           listContainer.innerHTML = '<p style="color: var(--muted); font-size: 12px; text-align: center; padding: 20px;">No saved study sets found.</p>';
         }
@@ -539,21 +615,15 @@
         if (res.ok) {
           const userData = await res.json();
 
-          // Apply logged-in UI layout
           document.getElementById('appRoot').classList.add('logged-in');
           document.getElementById('profileContainer').style.display = 'block';
 
-          // Hide landing page and switch to Overview page ONLY if currently on landing page
-          const currentActive = document.querySelector('.page-view.active-page');
-          if (!currentActive || currentActive.id === 'pageLanding') {
-            document.querySelectorAll('.page-view').forEach(p => p.classList.remove('active-page'));
-            document.getElementById('pageOverview').classList.add('active-page');
+          document.querySelectorAll('.page-view').forEach(p => p.classList.remove('active-page'));
+          document.getElementById('pageOverview').classList.add('active-page');
 
-            // Highlight Overview in sidebar navigation
-            navItems.forEach(item => {
-              item.classList.toggle('active', item.getAttribute('data-target') === 'pageOverview');
-            });
-          }
+          navItems.forEach(item => {
+            item.classList.toggle('active', item.getAttribute('data-target') === 'pageOverview');
+          });
 
           if (userData.name) document.getElementById('dropName').textContent = userData.name;
           if (userData.email) document.getElementById('dropEmail').textContent = userData.email;
@@ -564,13 +634,13 @@
           const qRes = await fetch('/api/quizzes');
           if (qRes.ok) {
             const qData = await qRes.json();
-            globalQuizzes = qData.quizzes || [];
+            const quizzes = qData.quizzes || [];
             
-            document.getElementById('dropQuizCount').textContent = globalQuizzes.length;
-            document.getElementById('statQuizzesMade').textContent = globalQuizzes.length;
+            document.getElementById('dropQuizCount').textContent = quizzes.length;
+            document.getElementById('statQuizzesMade').textContent = quizzes.length;
 
             let totalQuestions = 0;
-            globalQuizzes.forEach(q => {
+            quizzes.forEach(q => {
               try {
                 const parsed = typeof q.quiz_data === 'string' ? JSON.parse(q.quiz_data) : (q.quiz_data || []);
                 totalQuestions += parsed.length;
@@ -582,10 +652,9 @@
             document.getElementById('statAverageScore').textContent = `${Math.round(avg)}%`;
             document.getElementById('dropAvgScore').textContent = `${Math.round(avg)}%`;
 
-            renderLibraryLists(globalQuizzes);
+            renderLibraryLists(quizzes);
           }
         } else {
-          // Unauthenticated State
           document.getElementById('appRoot').classList.remove('logged-in');
           document.getElementById('profileContainer').style.display = 'none';
 
@@ -610,40 +679,24 @@
         return;
       }
 
-      const generateItemsHtml = (items, isSlice = false) => items.map((q, i) => {
+      const generateItemsHtml = (items) => items.map((q, i) => {
         const dateStr = new Date(q.created_at).toLocaleDateString();
         let qCount = 0;
         try { 
           qCount = (typeof q.quiz_data === 'string' ? JSON.parse(q.quiz_data) : (q.quiz_data || [])).length; 
         } catch(e){}
-        // Find actual index in globalQuizzes array
-        const realIndex = isSlice ? i : i;
         return `
-          <div class="library-item clickable-quiz-item" data-index="${realIndex}">
+          <div class="library-item">
             <div class="folder">📝</div>
             <div>
-              <strong>Study Set #${quizzes.length - i}</strong>
+              <strong>Study Set #${items.length - i}</strong>
               <span>${qCount} Questions • ${dateStr}</span>
             </div>
           </div>`;
       }).join('');
 
-      if (overviewList) {
-        overviewList.innerHTML = generateItemsHtml(quizzes.slice(0, 3), false);
-      }
-      if (fullList) {
-        fullList.innerHTML = generateItemsHtml(quizzes, false);
-      }
-
-      // Attach click events to load archived quizzes
-      document.querySelectorAll('.clickable-quiz-item').forEach(el => {
-        el.onclick = () => {
-          const idx = el.getAttribute('data-index');
-          if (globalQuizzes[idx]) {
-            loadQuizFromArchive(globalQuizzes[idx].quiz_data);
-          }
-        };
-      });
+      if (overviewList) overviewList.innerHTML = generateItemsHtml(quizzes.slice(0, 3));
+      if (fullList) fullList.innerHTML = generateItemsHtml(quizzes);
     }
 
     document.addEventListener('DOMContentLoaded', loadDashboard);
